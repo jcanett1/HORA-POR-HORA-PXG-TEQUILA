@@ -128,7 +128,7 @@ begin
      where r.planta = p_planta
        and r.area = p_area
        and r.fecha_hora_captura >= date_trunc('day', now())
-       and r.sh_normalizada = v_sh
+       and r.sh_normalizado = v_sh
        and r.numero_parte_normalizada = v_parte
        and r.estatus_supervisor <> 'cancelado'
   ) then
