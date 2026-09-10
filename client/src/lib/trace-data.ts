@@ -209,7 +209,17 @@ export type UserFormPayload = {
 export async function listAdminUsers() {
   if (!supabase) throw new Error("Supabase no está configurado.");
   const { data, error } = await supabase.functions.invoke("admin-users", { body: { action: "list" } });
-  if (error) throw error;
+  if (error) {
+    const fallback = await supabase.from("perfiles_usuarios").select("*").order("nombre_completo", { ascending: true });
+    if (!fallback.error) {
+      return ((fallback.data || []) as Profile[]).map((profile) => ({
+        ...profile,
+        email: "Correo disponible al desplegar la función admin-users",
+        last_sign_in_at: null,
+      })) as AdminUser[];
+    }
+    throw new Error(`No fue posible cargar usuarios. Despliega la Edge Function admin-users y verifica RLS. Detalle: ${error.message}`);
+  }
   if (data?.error) throw new Error(data.error);
   return (data?.users || []) as AdminUser[];
 }
@@ -217,7 +227,7 @@ export async function listAdminUsers() {
 export async function saveAdminUser(action: "create" | "update", payload: UserFormPayload) {
   if (!supabase) throw new Error("Supabase no está configurado.");
   const { data, error } = await supabase.functions.invoke("admin-users", { body: { action, ...payload } });
-  if (error) throw error;
+  if (error) throw new Error(`La Edge Function admin-users no está disponible. Despliégala en Supabase antes de crear o editar usuarios. Detalle: ${error.message}`);
   if (data?.error) throw new Error(data.error);
   return data as { user: { id: string; email?: string }; profile: Profile };
 }
