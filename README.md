@@ -1,4 +1,4 @@
-# TRAZA · Match y trazabilidad de materiales
+# PXG TEQUILA · Match y trazabilidad de materiales
 
 Frontend React + Vite para registrar órdenes, números de parte y SH, ejecutar el match contra documentos maestros y permitir la revisión del supervisor.
 
@@ -126,7 +126,7 @@ Si el despliegue lo realiza una plataforma como Vercel, Netlify o Cloudflare Pag
 
 El repositorio incluye `.github/workflows/deploy-pages.yml`. En **Settings → Pages**, cambia **Build and deployment → Source** de `Deploy from a branch` a **GitHub Actions**. Si se deja `Legacy / main / root`, GitHub publicará este README en lugar de `dist/public`.
 
-Después del cambio, ejecuta el workflow `Deploy TRAZA to GitHub Pages` desde **Actions → Deploy TRAZA to GitHub Pages → Run workflow**, o realiza un nuevo push a `main`. La URL pública será:
+Después del cambio, ejecuta el workflow `Deploy PXG TEQUILA to GitHub Pages` desde **Actions → Deploy PXG TEQUILA to GitHub Pages → Run workflow**, o realiza un nuevo push a `main`. La URL pública será:
 
 ```text
 https://jcanett1.github.io/HORA-POR-HORA-PXG-TEQUILA/
