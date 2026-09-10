@@ -64,7 +64,7 @@ export async function fetchTraceData(user: User, profile: Profile | null) {
   const [recordsResult, documentsResult, shiftsResult] = await Promise.all([
     supabase
       .from("registros_captura")
-      .select("*, perfiles_usuarios(nombre_completo)")
+      .select("*, perfiles_usuarios:perfiles_usuarios!registros_captura_usuario_id_fkey(nombre_completo)")
       .order("fecha_hora_captura", { ascending: false })
       .limit(250),
     supabase
