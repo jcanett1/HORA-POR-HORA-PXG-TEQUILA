@@ -12,6 +12,8 @@ Desde el botón del perfil, el usuario puede editar sus datos propios. Un admini
 
 La carga del archivo requiere que el usuario tenga rol `supervisor` o `administrador`. El archivo original se intenta guardar en el bucket privado `documentos-maestros`; si el bucket todavía no existe, la importación de filas puede continuar, pero se mostrará una advertencia sobre Storage.
 
+La captura operativa utiliza el formato **Registro hora por hora**. Cada registro guarda SH, cantidad, orden x hora, piezas x hora, hora del servidor y la celda asignada al usuario. Las celdas válidas son `CELDA 16`, `CELDA 15`, `CELDA 11` y `CELDA 10`.
+
 ## Requisitos en Supabase
 
 Ejecuta primero el script SQL incluido en el proyecto o el archivo entregado por separado:
@@ -45,6 +47,20 @@ documentos-maestros
 ```
 
 No uses un bucket público para documentos de producción. Más adelante conviene agregar políticas de Storage que permitan a supervisores y administradores subir archivos, y que solo permitan descargar archivos mediante URLs firmadas.
+
+## Migración del registro hora por hora
+
+Si el esquema original ya está instalado, ejecuta una sola vez el archivo:
+
+```text
+supabase/hourly-register-migration.sql
+```
+
+La migración agrega `cantidad`, `orden_x_hora`, `piezas_x_hora` y `celda` a `registros_captura`, agrega la celda asignada a `perfiles_usuarios`, crea el catálogo de las cuatro celdas y reemplaza la RPC `registrar_captura` con una versión que obtiene la celda desde el perfil autenticado.
+
+Un operador sin celda puede elegirla una sola vez en la pestaña **Registro hora por hora**. Después de esa selección el usuario queda bloqueado a esa celda. Únicamente un administrador puede cambiarla desde **Perfil → Ver usuarios → Editar**.
+
+La hora no se acepta como dato editable del navegador: `fecha_hora_captura` continúa usando `now()` del servidor de Supabase.
 
 ## Variables locales
 
@@ -169,6 +185,7 @@ El resultado automático y la confirmación del supervisor se mantienen separado
 | `client/src/components/AuthGate.tsx` | Login y sesión Supabase Auth; modo demo sin variables. |
 | `client/src/components/ProfileAndUsers.tsx` | Menú de perfil, edición propia y administración de usuarios. |
 | `client/src/pages/Home.tsx` | Panel, captura, supervisión, documentos, reportes e historial. |
+| `supabase/hourly-register-migration.sql` | Columnas, celdas, RPC y permisos del registro hora por hora. |
 | `supabase/functions/admin-users/index.ts` | Edge Function protegida para listar, crear y editar usuarios Auth. |
 | `supabase/profile-update.sql` | Policy RLS para actualizar el perfil propio. |
 | `.env.example` | Plantilla de variables públicas necesarias para Vite. |

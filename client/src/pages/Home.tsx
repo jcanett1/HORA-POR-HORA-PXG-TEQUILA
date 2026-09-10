@@ -38,7 +38,7 @@ import {
 import { toast } from "sonner";
 import type { User } from "@supabase/supabase-js";
 import type { AuthContextValue } from "@/components/AuthGate";
-import type { MasterDocument, Profile } from "@/lib/database.types";
+import type { MasterDocument, Profile, ProductionCell } from "@/lib/database.types";
 import { fetchTraceData, importMasterDocument, mapCaptureRow, type ReferenceRow } from "@/lib/trace-data";
 import { supabase } from "@/lib/supabase";
 import { ProfileEditorModal, ProfileMenu, UsersAdmin } from "@/components/ProfileAndUsers";
@@ -63,6 +63,10 @@ type RecordItem = {
   order: string;
   part: string;
   sh: string;
+  quantity: number;
+  ordersPerHour: number;
+  piecesPerHour: number;
+  cell: string | null;
   operator: string;
   match: MatchState;
   reason?: string;
@@ -73,7 +77,7 @@ type RecordItem = {
 
 const navigation: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "panel", label: "Panel de control", icon: LayoutDashboard },
-  { id: "captura", label: "Capturar material", icon: ScanLine },
+  { id: "captura", label: "Registro hora por hora", icon: Clock3 },
   { id: "supervision", label: "Supervisión", icon: ShieldCheck },
   { id: "documentos", label: "Documentos maestros", icon: FileSpreadsheet },
   { id: "reportes", label: "Reportes", icon: BarChart3 },
@@ -279,71 +283,74 @@ function RecordTableRow({ record, withActions, onReview, onOpen }: { record: Rec
   );
 }
 
-function Capture({ onCapture, user, profile, liveMode, operatorName }: { onCapture: (record: RecordItem) => void; user: User; profile: Profile | null; liveMode: boolean; operatorName: string }) {
+function Capture({ onCapture, user, profile, liveMode, operatorName, onProfileChange }: { onCapture: (record: RecordItem) => void; user: User; profile: Profile | null; liveMode: boolean; operatorName: string; onProfileChange: (profile: Profile) => void }) {
   const [order, setOrder] = useState("");
   const [part, setPart] = useState("");
   const [sh, setSh] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [ordersPerHour, setOrdersPerHour] = useState("");
+  const [piecesPerHour, setPiecesPerHour] = useState("");
   const [lastCapture, setLastCapture] = useState<RecordItem | null>(null);
+  const [cellSaving, setCellSaving] = useState(false);
+  const [currentHour] = useState(() => new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }));
+
+  async function selectCell(cell: ProductionCell) {
+    if (!supabase || !profile || profile.celda) return;
+    setCellSaving(true);
+    const { data, error } = await supabase.rpc("seleccionar_celda", { p_celda: cell });
+    setCellSaving(false);
+    if (error) { toast.error(error.message); return; }
+    const updated = Array.isArray(data) ? data[0] : data;
+    if (updated) { onProfileChange(updated as Profile); toast.success(`Usuario asignado a ${cell}.`); }
+  }
 
   async function submitCapture(event: React.FormEvent) {
     event.preventDefault();
-    if (!order || !part || !sh) {
-      toast.error("Completa orden, número de parte y SH para continuar.");
-      return;
-    }
-    if (!liveMode || !supabase) {
-      toast.error("Supabase no está conectado. Configura las variables del despliegue para comenzar a registrar datos reales.");
-      return;
-    }
+    if (!order || !part || !sh) { toast.error("Completa Orden, Fulbag/accesorio y SH para continuar."); return; }
+    if (!liveMode || !supabase) { toast.error("Supabase no está conectado. Configura las variables del despliegue para comenzar a registrar datos reales."); return; }
+    if (!profile?.celda) { toast.error("Selecciona una celda antes de registrar materiales."); return; }
+    if (!quantity || Number(quantity) < 0 || !ordersPerHour || Number(ordersPerHour) < 0 || !piecesPerHour || Number(piecesPerHour) < 0) { toast.error("Completa Cantidad, Orden x hora y Piezas x hora con valores válidos."); return; }
 
-      const { data, error } = await supabase.rpc("registrar_captura", {
-        p_orden: order,
-        p_numero_parte: part,
-        p_sh: sh,
-        p_planta: profile?.planta || "Monterrey",
-        p_area: profile?.area || "Produccion",
-        p_turno_id: null,
-        p_observaciones: null,
-        p_idempotency_key: crypto.randomUUID(),
-      });
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
-      const row = Array.isArray(data) ? data[0] : data;
-      if (!row) {
-        toast.error("Supabase no devolvió el registro creado.");
-        return;
-      }
-      const record = mapCaptureRow({ ...row, perfiles_usuarios: { nombre_completo: operatorName } });
-      onCapture(record);
-      setLastCapture(record);
-      setOrder(""); setPart(""); setSh("");
-      toast.success(record.match === "Coincide" ? "Match correcto registrado" : "Captura registrada para revisión");
-      return;
+    const { data, error } = await supabase.rpc("registrar_captura", {
+      p_orden: order,
+      p_numero_parte: part,
+      p_sh: sh,
+      p_planta: profile.planta || "Monterrey",
+      p_area: profile.area || "Produccion",
+      p_turno_id: null,
+      p_observaciones: null,
+      p_idempotency_key: crypto.randomUUID(),
+      p_cantidad: Number(quantity),
+      p_orden_x_hora: Number(ordersPerHour),
+      p_piezas_x_hora: Number(piecesPerHour),
+    });
+    if (error) { toast.error(error.message); return; }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) { toast.error("Supabase no devolvió el registro creado."); return; }
+    const record = mapCaptureRow({ ...row, perfiles_usuarios: { nombre_completo: operatorName } });
+    onCapture(record);
+    setLastCapture(record);
+    setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour("");
+    toast.success(record.match === "Coincide" ? "Match correcto registrado" : "Registro hora por hora guardado para revisión");
   }
 
-  return (
-    <div className="space-y-7">
-      <SectionHeader eyebrow="Estación de captura" title="Registrar material" description="Ingresa o escanea la orden, el número de parte y el Shipping Hub. La hora y el usuario se registran automáticamente." />
-      <div className="grid gap-5 xl:grid-cols-[1.4fr_.8fr]">
-        <form onSubmit={submitCapture} className="soft-card overflow-hidden">
-          <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-7"><div className="flex items-center gap-3"><div className="rounded-xl bg-[#0e7f8d] p-2 text-white"><ScanLine className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Lectura de material</p><p className="mt-0.5 text-xs text-slate-500">Todos los campos son requeridos para validar.</p></div></div></div>
-          <div className="space-y-5 p-5 sm:p-7">
-            <div><label className="field-label" htmlFor="order">Orden de producción</label><input id="order" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="Ej. OP-240981" autoFocus className="field-input font-mono" /><p className="mt-1.5 text-xs text-slate-400">Escanea o escribe el identificador de la orden.</p></div>
-            <div><label className="field-label" htmlFor="part">Código / número de parte</label><input id="part" value={part} onChange={(e) => setPart(e.target.value)} placeholder="Ej. PN-RA-4102" className="field-input font-mono" /></div>
-            <div><label className="field-label" htmlFor="sh">SH · Shipping Hub</label><input id="sh" value={sh} onChange={(e) => setSh(e.target.value)} placeholder="Ej. SH-MTY-01" className="field-input font-mono" /></div>
-            <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => { setOrder(""); setPart(""); setSh(""); }} className="secondary-action justify-center">Limpiar</button><button type="submit" className="primary-action justify-center"><ScanLine className="h-4 w-4" />Validar y registrar</button></div>
-          </div>
-        </form>
-
-        <aside className="space-y-5">
-          <div className="soft-card p-5 sm:p-6"><p className="eyebrow">Contexto de validación</p><div className="mt-5 space-y-4"><div className="flex gap-3"><div className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Versión activa</p><p className="mt-1 text-xs text-slate-500">Documento maestro conectado</p></div></div><div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Usuario</p><p className="mt-1 text-sm font-semibold text-slate-700">{operatorName}</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Turno</p><p className="mt-1 text-sm font-semibold text-slate-700">Asignado por Supabase</p></div></div><p className="text-xs leading-5 text-slate-500">La hora exacta y el resultado del match se registran mediante la función segura de Supabase.</p></div></div>
-          {lastCapture ? <ResultCard record={lastCapture} /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center"><PackageCheck className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-600">Esperando lectura</p><p className="mx-auto mt-1 max-w-[220px] text-xs leading-5 text-slate-400">El resultado del match aparecerá aquí después de registrar el material.</p></div>}
-        </aside>
-      </div>
+  return <div className="space-y-7">
+    <SectionHeader eyebrow="Bitácora operativa" title="Registro hora por hora" description="Captura el SH, la cantidad, la orden y los indicadores de producción. La hora, el usuario y la celda se registran automáticamente." />
+    <div className="grid gap-5 xl:grid-cols-[1.4fr_.8fr]">
+      <form onSubmit={submitCapture} className="soft-card overflow-hidden">
+        <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-7"><div className="flex items-center gap-3"><div className="rounded-xl bg-[#0e7f8d] p-2 text-white"><Clock3 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Captura de producción</p><p className="mt-0.5 text-xs text-slate-500">El match se realiza con Orden + Fulbag/accesorio + SH.</p></div></div></div>
+        <div className="space-y-5 p-5 sm:p-7">
+          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="hour">Hora registrada</label><input id="hour" value={currentHour} readOnly className="field-input bg-slate-50 font-mono" /></div><div><label className="field-label">Celda de trabajo</label><div className="flex h-[42px] items-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-700">{profile?.celda || "Sin asignar"}</div></div></div>
+          {!profile?.celda ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-bold text-amber-900">Selecciona tu celda de trabajo</p><p className="mt-1 text-xs leading-5 text-amber-800">Esta selección se guarda una sola vez. Después solo un administrador podrá cambiarla.</p><div className="mt-3 grid grid-cols-2 gap-2">{(["CELDA 16", "CELDA 15", "CELDA 11", "CELDA 10"] as ProductionCell[]).map((cell) => <button key={cell} type="button" disabled={cellSaving} onClick={() => void selectCell(cell)} className="rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 transition hover:border-amber-500 hover:bg-amber-100">{cell}</button>)}</div></div> : <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">Celda asignada por sistema: <strong>{profile.celda}</strong>. Solo un administrador puede cambiarla.</div>}
+          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="sh">SH</label><input id="sh" value={sh} onChange={(e) => setSh(e.target.value)} placeholder="Ej. SH2830416" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="quantity">Cantidad</label><input id="quantity" type="number" min="0" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="Ej. 6" className="field-input font-mono" /></div></div>
+          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="order">Orden de producción · match</label><input id="order" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="Ej. OP-240981" autoFocus className="field-input font-mono" /></div><div><label className="field-label" htmlFor="part">Fulbag o accesorio · código / número de parte</label><input id="part" value={part} onChange={(e) => setPart(e.target.value)} placeholder="Ej. PGA o PN-RA-4102" className="field-input font-mono" /></div></div>
+          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="ordersPerHour">Orden x hora</label><input id="ordersPerHour" type="number" min="0" step="0.001" value={ordersPerHour} onChange={(e) => setOrdersPerHour(e.target.value)} placeholder="Ej. 10" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="piecesPerHour">Piezas x hora</label><input id="piecesPerHour" type="number" min="0" step="0.001" value={piecesPerHour} onChange={(e) => setPiecesPerHour(e.target.value)} placeholder="Ej. 33" className="field-input font-mono" /></div></div>
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => { setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour(""); }} className="secondary-action justify-center">Limpiar</button><button type="submit" className="primary-action justify-center"><ScanLine className="h-4 w-4" />Validar y registrar</button></div>
+        </div>
+      </form>
+      <aside className="space-y-5"><div className="soft-card p-5 sm:p-6"><p className="eyebrow">Contexto de validación</p><div className="mt-5 space-y-4"><div className="flex gap-3"><div className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Match de material</p><p className="mt-1 text-xs text-slate-500">Orden + Fulbag/accesorio + SH</p></div></div><div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Usuario</p><p className="mt-1 text-sm font-semibold text-slate-700">{operatorName}</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Celda</p><p className="mt-1 text-sm font-semibold text-slate-700">{profile?.celda || "Sin asignar"}</p></div></div><p className="text-xs leading-5 text-slate-500">La hora exacta y el resultado del match se registran mediante la función segura de Supabase.</p></div></div>{lastCapture ? <ResultCard record={lastCapture} /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center"><PackageCheck className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-600">Esperando lectura</p><p className="mx-auto mt-1 max-w-[220px] text-xs leading-5 text-slate-400">El resultado del match aparecerá aquí después de registrar el material.</p></div>}</aside>
     </div>
-  );
+  </div>;
 }
 
 function ResultCard({ record }: { record: RecordItem }) {
@@ -494,7 +501,7 @@ export default function Home({ user, profile, liveMode, signOut }: AuthContextVa
     </aside>
     {mobileMenu ? <button aria-label="Cerrar menú" onClick={() => setMobileMenu(false)} className="fixed inset-0 z-30 bg-slate-950/35 lg:hidden" /> : null}
     <main className="relative min-h-screen lg:pl-[278px]"><header className="sticky top-0 z-20 flex h-[74px] items-center justify-between border-b border-slate-200/80 bg-[#f9fbfb]/85 px-4 backdrop-blur-xl sm:px-7 lg:px-9"><div className="flex items-center gap-3"><button onClick={() => setMobileMenu(true)} aria-label="Abrir menú" className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"><LayoutDashboard className="h-5 w-5" /></button><div><p className="text-xs font-bold text-slate-700 sm:text-sm">{activeTitle}</p><p className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">Planta Monterrey · Primer turno</p></div></div><div className="flex items-center gap-3"><div className="hidden text-right sm:block"><p className="text-xs font-semibold capitalize text-slate-700">{clock}</p><p className="mt-0.5 text-[10px] text-slate-400">Hora de estación</p></div><button onClick={() => toast.info("No hay notificaciones nuevas.")} className="relative rounded-xl border border-slate-200 bg-white p-2.5 text-slate-500 shadow-sm transition hover:border-cyan-200 hover:text-[#0e7f8d]"><Bell className="h-4 w-4" /><span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-amber-400 ring-2 ring-white" /></button></div></header>
-      <div className="mx-auto max-w-[1550px] px-4 py-7 sm:px-7 lg:px-9 lg:py-9">{dataLoading ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs font-semibold text-cyan-800"><div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-600 border-t-transparent" />Sincronizando con Supabase…</div> : null}{!liveMode ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800"><CircleAlert className="h-4 w-4" />Supabase no está configurado: conecta las variables para usar datos reales.</div> : null}{dataWarnings.length > 0 ? <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><div className="flex items-center gap-2 font-bold"><CircleAlert className="h-4 w-4" />Algunas fuentes no pudieron cargarse</div><ul className="mt-2 list-disc space-y-1 pl-5 font-mono text-[11px]">{dataWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div> : null}{view === "panel" && <Panel records={records} setView={setView} activeDocument={documents.find((document) => document.estatus_importacion === "activo") || documents[0]} />}{view === "captura" && <Capture onCapture={addRecord} user={user} profile={currentProfile} liveMode={liveMode} operatorName={operatorName} />}{view === "supervision" && <Supervision records={records} onReview={reviewRecord} />}{view === "documentos" && <Documents documents={documents} references={references} user={user} profile={currentProfile} liveMode={liveMode} onDocumentsChange={setDocuments} />}{view === "reportes" && <Reports records={records} />}{view === "historial" && <HistoryView records={records} />}{view === "usuarios" && <UsersAdmin liveMode={liveMode && isAdmin} currentUserId={user.id} onBack={() => setView("panel")} />}{view === "configuracion" && <SettingsView />}</div>
+      <div className="mx-auto max-w-[1550px] px-4 py-7 sm:px-7 lg:px-9 lg:py-9">{dataLoading ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs font-semibold text-cyan-800"><div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-600 border-t-transparent" />Sincronizando con Supabase…</div> : null}{!liveMode ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800"><CircleAlert className="h-4 w-4" />Supabase no está configurado: conecta las variables para usar datos reales.</div> : null}{dataWarnings.length > 0 ? <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><div className="flex items-center gap-2 font-bold"><CircleAlert className="h-4 w-4" />Algunas fuentes no pudieron cargarse</div><ul className="mt-2 list-disc space-y-1 pl-5 font-mono text-[11px]">{dataWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div> : null}{view === "panel" && <Panel records={records} setView={setView} activeDocument={documents.find((document) => document.estatus_importacion === "activo") || documents[0]} />}{view === "captura" && <Capture onCapture={addRecord} user={user} profile={currentProfile} liveMode={liveMode} operatorName={operatorName} onProfileChange={setCurrentProfile} />}{view === "supervision" && <Supervision records={records} onReview={reviewRecord} />}{view === "documentos" && <Documents documents={documents} references={references} user={user} profile={currentProfile} liveMode={liveMode} onDocumentsChange={setDocuments} />}{view === "reportes" && <Reports records={records} />}{view === "historial" && <HistoryView records={records} />}{view === "usuarios" && <UsersAdmin liveMode={liveMode && isAdmin} currentUserId={user.id} onBack={() => setView("panel")} />}{view === "configuracion" && <SettingsView />}</div>
       {profileEditorOpen && currentProfile ? <ProfileEditorModal userId={user.id} profile={currentProfile} onClose={() => setProfileEditorOpen(false)} onSaved={(updated) => setCurrentProfile(updated)} /> : null}
       <footer className="mx-4 border-t border-slate-200/80 py-5 text-center text-[11px] text-slate-400 sm:mx-7 lg:mx-9">TRAZA · {liveMode ? "Datos sincronizados con Supabase" : "Modo local sin persistencia"}.</footer>
     </main>

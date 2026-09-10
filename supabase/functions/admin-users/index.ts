@@ -18,6 +18,7 @@ type RequestBody = {
   rol?: "operador" | "supervisor" | "administrador";
   planta?: string;
   area?: string;
+  celda?: "CELDA 16" | "CELDA 15" | "CELDA 11" | "CELDA 10" | null;
   activo?: boolean;
 };
 
@@ -111,6 +112,7 @@ Deno.serve(async (request) => {
         rol: payload.rol || "operador",
         planta: payload.planta || "Monterrey",
         area: payload.area || "Produccion",
+        celda: payload.celda || null,
         activo: payload.activo ?? true,
         updated_at: new Date().toISOString(),
       })
@@ -143,6 +145,7 @@ Deno.serve(async (request) => {
         rol: payload.rol || "operador",
         planta: payload.planta || "Monterrey",
         area: payload.area || "Produccion",
+        celda: payload.celda || null,
         activo: payload.activo ?? true,
         updated_at: new Date().toISOString(),
       })

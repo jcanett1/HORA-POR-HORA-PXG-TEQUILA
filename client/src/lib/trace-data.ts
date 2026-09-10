@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
-import type { CaptureRow, MasterDocument, Profile, Shift } from "./database.types";
+import type { CaptureRow, MasterDocument, Profile, ProductionCell, Shift } from "./database.types";
 
 export type TraceRecord = {
   id: string;
@@ -10,6 +10,10 @@ export type TraceRecord = {
   order: string;
   part: string;
   sh: string;
+  quantity: number;
+  ordersPerHour: number;
+  piecesPerHour: number;
+  cell: string | null;
   operator: string;
   match: "Coincide" | "Discrepancia" | "No encontrado" | "Duplicado";
   reason?: string;
@@ -50,6 +54,10 @@ export function mapCaptureRow(row: CaptureRow): TraceRecord {
     order: row.orden_original,
     part: row.numero_parte_original,
     sh: row.sh_original,
+    quantity: Number(row.cantidad || 0),
+    ordersPerHour: Number(row.orden_x_hora || 0),
+    piecesPerHour: Number(row.piezas_x_hora || 0),
+    cell: row.celda || null,
     operator: row.perfiles_usuarios?.nombre_completo || "Usuario autenticado",
     match: matchLabels[row.resultado_match] || "No encontrado",
     reason: row.motivo_discrepancia || undefined,
@@ -226,6 +234,7 @@ export type UserFormPayload = {
   rol: "operador" | "supervisor" | "administrador";
   planta: string;
   area: string;
+  celda?: ProductionCell | null;
   activo: boolean;
 };
 

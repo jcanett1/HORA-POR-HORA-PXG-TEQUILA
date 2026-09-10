@@ -1,4 +1,5 @@
 export type UserRole = "operador" | "supervisor" | "administrador";
+export type ProductionCell = "CELDA 16" | "CELDA 15" | "CELDA 11" | "CELDA 10";
 export type MatchResult = "coincide" | "discrepancia" | "no_encontrado" | "duplicado";
 export type SupervisorStatus = "pendiente" | "confirmado" | "rechazado" | "cancelado";
 export type DocumentStatus = "cargado" | "procesando" | "validado" | "activo" | "archivado" | "error";
@@ -10,6 +11,7 @@ export type Profile = {
   rol: UserRole;
   planta: string;
   area: string;
+  celda: ProductionCell | null;
   activo: boolean;
   created_at: string;
   updated_at: string;
@@ -22,12 +24,16 @@ export type CaptureRow = {
   turno_id: string | null;
   planta: string;
   area: string;
+  celda: ProductionCell | null;
   orden_original: string;
   numero_parte_original: string;
   sh_original: string;
   orden_normalizada: string;
   numero_parte_normalizada: string;
   sh_normalizado: string;
+  cantidad: number;
+  orden_x_hora: number;
+  piezas_x_hora: number;
   documento_id_validacion: string | null;
   dato_referencia_id: string | null;
   resultado_match: MatchResult;
@@ -70,6 +76,7 @@ export type Shift = {
   hora_fin: string;
   zona_horaria: string;
   activo: boolean;
+  created_at?: string;
 };
 
 export type Database = {
@@ -93,6 +100,9 @@ export type Database = {
           p_turno_id?: string | null;
           p_observaciones?: string | null;
           p_idempotency_key?: string | null;
+          p_cantidad?: number;
+          p_orden_x_hora?: number;
+          p_piezas_x_hora?: number;
         };
         Returns: CaptureRow[];
       };
@@ -106,6 +116,8 @@ export type Database = {
         Returns: CaptureRow;
       };
       activar_documento: { Args: { p_documento_id: string }; Returns: MasterDocument };
+      seleccionar_celda: { Args: { p_celda: ProductionCell }; Returns: Profile };
+      asignar_celda_usuario: { Args: { p_usuario_id: string; p_celda: ProductionCell }; Returns: Profile };
     };
   };
 };
