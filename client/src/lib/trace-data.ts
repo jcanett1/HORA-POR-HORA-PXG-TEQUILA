@@ -1,0 +1,190 @@
+import * as XLSX from "xlsx";
+import type { User } from "@supabase/supabase-js";
+import { supabase } from "./supabase";
+import type { CaptureRow, MasterDocument, Profile, Shift } from "./database.types";
+
+export type TraceRecord = {
+  id: string;
+  time: string;
+  date: string;
+  order: string;
+  part: string;
+  sh: string;
+  operator: string;
+  match: "Coincide" | "Discrepancia" | "No encontrado" | "Duplicado";
+  reason?: string;
+  review: "Pendiente" | "Confirmado" | "Rechazado" | "Cancelado";
+  document: string;
+};
+
+const matchLabels: Record<string, TraceRecord["match"]> = {
+  coincide: "Coincide",
+  discrepancia: "Discrepancia",
+  no_encontrado: "No encontrado",
+  duplicado: "Duplicado",
+};
+
+const reviewLabels: Record<string, TraceRecord["review"]> = {
+  pendiente: "Pendiente",
+  confirmado: "Confirmado",
+  rechazado: "Rechazado",
+  cancelado: "Cancelado",
+};
+
+export function mapCaptureRow(row: CaptureRow): TraceRecord {
+  const capturedAt = new Date(row.fecha_hora_captura);
+  return {
+    id: row.id,
+    time: capturedAt.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }),
+    date: capturedAt.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }),
+    order: row.orden_original,
+    part: row.numero_parte_original,
+    sh: row.sh_original,
+    operator: row.perfiles_usuarios?.nombre_completo || "Usuario autenticado",
+    match: matchLabels[row.resultado_match] || "No encontrado",
+    reason: row.motivo_discrepancia || undefined,
+    review: reviewLabels[row.estatus_supervisor] || "Pendiente",
+    document: row.documento_id_validacion ? "Documento maestro versionado" : "Sin documento activo",
+  };
+}
+
+export async function fetchTraceData(user: User, profile: Profile | null) {
+  if (!supabase) return { records: [] as TraceRecord[], documents: [] as MasterDocument[], shifts: [] as Shift[] };
+
+  const [recordsResult, documentsResult, shiftsResult] = await Promise.all([
+    supabase
+      .from("registros_captura")
+      .select("*, perfiles_usuarios(nombre_completo)")
+      .order("fecha_hora_captura", { ascending: false })
+      .limit(250),
+    supabase
+      .from("documentos_maestros")
+      .select("*")
+      .eq("planta", profile?.planta || "Monterrey")
+      .eq("area", profile?.area || "Produccion")
+      .order("fecha_carga", { ascending: false }),
+    supabase.from("turnos").select("*").eq("activo", true).order("hora_inicio"),
+  ]);
+
+  if (recordsResult.error) throw recordsResult.error;
+  if (documentsResult.error) throw documentsResult.error;
+  if (shiftsResult.error) throw shiftsResult.error;
+
+  return {
+    records: ((recordsResult.data || []) as CaptureRow[]).map(mapCaptureRow),
+    documents: (documentsResult.data || []) as MasterDocument[],
+    shifts: (shiftsResult.data || []) as Shift[],
+  };
+}
+
+function normalizeHeader(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function normalizeValue(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function findColumn(headers: string[], candidates: string[]) {
+  const normalizedCandidates = candidates.map(normalizeHeader);
+  return headers.findIndex((header) => normalizedCandidates.includes(normalizeHeader(header)));
+}
+
+export async function importMasterDocument(file: File, user: User, profile: Profile) {
+  if (!supabase) throw new Error("Supabase no está configurado.");
+  if (!['supervisor', 'administrador'].includes(profile.rol)) {
+    throw new Error("Solo un supervisor o administrador puede cargar documentos maestros.");
+  }
+
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!sheet) throw new Error("El archivo no contiene una hoja de cálculo.");
+
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
+  if (matrix.length < 2) throw new Error("El archivo debe incluir encabezados y al menos una fila.");
+
+  const headers = (matrix[0] || []).map((header) => String(header));
+  const orderIndex = findColumn(headers, ["orden", "order", "production order", "work order"]);
+  const partIndex = findColumn(headers, ["numero de parte", "part number", "part", "codigo", "code", "material"]);
+  const shIndex = findColumn(headers, ["sh", "shipping hub", "shippinghub"]);
+
+  if (orderIndex < 0 || partIndex < 0 || shIndex < 0) {
+    throw new Error("No se encontraron las columnas requeridas. Usa encabezados como Orden, Número de Parte y SH.");
+  }
+
+  const rows = matrix.slice(1);
+  const referenceRows = rows
+    .map((row, index) => {
+      const order = String(row[orderIndex] ?? "").trim();
+      const part = String(row[partIndex] ?? "").trim();
+      const sh = String(row[shIndex] ?? "").trim();
+      if (!order || !part || !sh) return null;
+      return {
+        numero_fila_origen: index + 2,
+        orden_original: order,
+        numero_parte_original: part,
+        sh_original: sh,
+        orden_normalizada: normalizeValue(order),
+        numero_parte_normalizada: normalizeValue(part),
+        sh_normalizado: normalizeValue(sh),
+        activo: true,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+  if (referenceRows.length === 0) throw new Error("No hay filas válidas con Orden, Número de Parte y SH.");
+
+  let storagePath: string | null = null;
+  const storageName = `${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  const storageResult = await supabase.storage.from("documentos-maestros").upload(storageName, file, { upsert: false });
+  if (!storageResult.error) storagePath = storageName;
+
+  const { data: document, error: documentError } = await supabase
+    .from("documentos_maestros")
+    .insert({
+      nombre_archivo: file.name,
+      tipo_archivo: file.name.split(".").pop()?.toLowerCase() || "xlsx",
+      usuario_carga_id: user.id,
+      planta: profile.planta,
+      area: profile.area,
+      estatus_importacion: "procesando",
+      total_filas: rows.length,
+      filas_validas: referenceRows.length,
+      filas_con_error: rows.length - referenceRows.length,
+      ruta_storage: storagePath,
+      notas: storageResult.error ? "Archivo procesado en navegador; Storage no disponible o bucket no creado." : null,
+    })
+    .select("*")
+    .single();
+
+  if (documentError || !document) throw documentError || new Error("No fue posible crear el documento maestro.");
+
+  const chunks: typeof referenceRows[] = [];
+  for (let index = 0; index < referenceRows.length; index += 500) chunks.push(referenceRows.slice(index, index + 500));
+
+  for (const chunk of chunks) {
+    const { error } = await supabase.from("datos_referencia").insert(chunk.map((row) => ({ ...row, documento_id: document.id })));
+    if (error) {
+      await supabase.from("documentos_maestros").update({ estatus_importacion: "error", notas: error.message }).eq("id", document.id);
+      throw error;
+    }
+  }
+
+  const { data: validated, error: validateError } = await supabase
+    .from("documentos_maestros")
+    .update({ estatus_importacion: "validado" })
+    .eq("id", document.id)
+    .select("*")
+    .single();
+  if (validateError || !validated) throw validateError || new Error("No fue posible validar el documento.");
+
+  let activated: MasterDocument = validated as MasterDocument;
+  const activation = await supabase.rpc("activar_documento", { p_documento_id: document.id });
+  if (!activation.error && activation.data) activated = activation.data as MasterDocument;
+
+  return { document: activated, storageWarning: Boolean(storageResult.error) };
+}
