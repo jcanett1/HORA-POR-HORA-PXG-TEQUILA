@@ -59,7 +59,7 @@ export function mapCaptureRow(row: CaptureRow): TraceRecord {
 }
 
 export async function fetchTraceData(user: User, profile: Profile | null) {
-  if (!supabase) return { records: [] as TraceRecord[], documents: [] as MasterDocument[], references: [] as ReferenceRow[], shifts: [] as Shift[] };
+  if (!supabase) return { records: [] as TraceRecord[], documents: [] as MasterDocument[], references: [] as ReferenceRow[], shifts: [] as Shift[], warnings: [] as string[] };
 
   const [recordsResult, documentsResult, shiftsResult] = await Promise.all([
     supabase
@@ -74,11 +74,12 @@ export async function fetchTraceData(user: User, profile: Profile | null) {
     supabase.from("turnos").select("*").eq("activo", true).order("hora_inicio"),
   ]);
 
-  if (recordsResult.error) throw recordsResult.error;
-  if (documentsResult.error) throw documentsResult.error;
-  if (shiftsResult.error) throw shiftsResult.error;
+  const warnings: string[] = [];
+  if (recordsResult.error) warnings.push(`registros_captura: ${recordsResult.error.message}`);
+  if (documentsResult.error) warnings.push(`documentos_maestros: ${documentsResult.error.message}`);
+  if (shiftsResult.error) warnings.push(`turnos: ${shiftsResult.error.message}`);
 
-  const documents = (documentsResult.data || []) as MasterDocument[];
+  const documents = documentsResult.error ? [] : (documentsResult.data || []) as MasterDocument[];
   const documentIds = documents.map((document) => document.id);
   const referencesResult = documentIds.length
     ? await supabase
@@ -88,13 +89,14 @@ export async function fetchTraceData(user: User, profile: Profile | null) {
         .order("numero_fila_origen", { ascending: true })
         .limit(250)
     : { data: [], error: null };
-  if (referencesResult.error) throw referencesResult.error;
+  if (referencesResult.error) warnings.push(`datos_referencia: ${referencesResult.error.message}`);
 
   return {
-    records: ((recordsResult.data || []) as CaptureRow[]).map(mapCaptureRow),
+    records: recordsResult.error ? [] : ((recordsResult.data || []) as CaptureRow[]).map(mapCaptureRow),
     documents,
-    references: (referencesResult.data || []) as ReferenceRow[],
-    shifts: (shiftsResult.data || []) as Shift[],
+    references: referencesResult.error ? [] : (referencesResult.data || []) as ReferenceRow[],
+    shifts: shiftsResult.error ? [] : (shiftsResult.data || []) as Shift[],
+    warnings,
   };
 }
 
