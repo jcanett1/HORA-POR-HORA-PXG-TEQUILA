@@ -309,14 +309,19 @@ function Capture({ onCapture, user, profile, liveMode, operatorName, onProfileCh
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setLookupBusy(true);
-      void Promise.all([findAccessoryReferences(sh, profile), findExistingShRecords(sh)])
-        .then(([references, existingRecords]) => {
+      void Promise.allSettled([findAccessoryReferences(sh, profile), findExistingShRecords(sh)])
+        .then(([accessoryResult, existingResult]) => {
           if (cancelled) return;
-          setAccessoryRows(references.length > 1 ? references.map((reference) => ({ reference, code: reference.code, quantity: reference.expectedQuantity === null ? "" : String(reference.expectedQuantity) })) : []);
-          setExistingShRecords(existingRecords);
-          setLookupError("");
+          const errors: string[] = [];
+          if (accessoryResult.status === "fulfilled") {
+            setAccessoryRows(accessoryResult.value.length > 1 ? accessoryResult.value.map((reference) => ({ reference, code: reference.code, quantity: reference.expectedQuantity === null ? "" : String(reference.expectedQuantity) })) : []);
+          } else {
+            errors.push(accessoryResult.reason instanceof Error ? accessoryResult.reason.message : "No fue posible consultar los accesorios del SH.");
+          }
+          if (existingResult.status === "fulfilled") setExistingShRecords(existingResult.value);
+          else errors.push(existingResult.reason instanceof Error ? existingResult.reason.message : "No fue posible revisar si el SH ya fue ingresado.");
+          setLookupError(errors.join(" | "));
         })
-        .catch((error) => { if (!cancelled) setLookupError(error instanceof Error ? error.message : "No fue posible consultar los accesorios del SH."); })
         .finally(() => { if (!cancelled) setLookupBusy(false); });
     }, 450);
     return () => { cancelled = true; window.clearTimeout(timer); };
@@ -388,7 +393,7 @@ function Capture({ onCapture, user, profile, liveMode, operatorName, onProfileCh
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="sh">SH</label><input id="sh" value={sh} onChange={(e) => setSh(e.target.value)} placeholder="Ej. SH2830416" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="quantity">Cantidad total / cantidad del accesorio</label><input id="quantity" type="number" min="0" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder={accessoryRows.length > 1 ? "Se usa en captura individual" : "Ej. 6"} disabled={accessoryRows.length > 1} className="field-input font-mono disabled:bg-slate-50" /></div></div>
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="order">Orden de producción · match</label><input id="order" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="Ej. OP-240981" autoFocus className="field-input font-mono" /></div>{accessoryRows.length <= 1 ? <div><label className="field-label" htmlFor="part">Fulbag o accesorio · código / número de parte</label><input id="part" value={part} onChange={(e) => setPart(e.target.value)} placeholder="Ej. PGA o PN-RA-4102" className="field-input font-mono" /></div> : <div className="flex items-end rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-800">Se encontraron {accessoryRows.length} accesorios para este SH + orden.</div>}</div>
           {lookupBusy ? <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">Consultando accesorios del documento maestro…</div> : null}
-          {lookupError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">No fue posible consultar accesorios: {lookupError}</div> : null}
+          {lookupError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">Detalle de consulta: {lookupError}</div> : null}
           {existingShRecords.length > 0 ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-bold text-amber-900">Este SH ya fue ingresado</p><p className="mt-1 text-xs leading-5 text-amber-800">Se encontraron {existingShRecords.length} registro(s) para <strong>{sh}</strong>. Puedes revisar el historial antes de registrar otro accesorio; si repites el mismo SH + accesorio, el sistema lo marcará como duplicado.</p></div> : null}
           {accessoryRows.length > 1 ? <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-cyan-950">Accesorios que debes capturar</p><p className="mt-1 text-xs text-cyan-800">Se encontraron para este SH. Confirma o corrige el código y captura la cantidad de cada uno. Se guardará un match independiente por accesorio.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-cyan-800">{accessoryRows.length} encontrados</span></div><div className="mt-4 grid gap-3 md:grid-cols-2">{accessoryRows.map((row, index) => <div key={row.reference.id} className="rounded-xl border border-cyan-100 bg-white p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Accesorio {index + 1}</span>{row.reference.expectedQuantity !== null ? <span className="text-[10px] font-semibold text-slate-400">Esperado: {row.reference.expectedQuantity}</span> : null}</div><div className="grid gap-2 sm:grid-cols-2"><input aria-label={`Código accesorio ${index + 1}`} value={row.code} onChange={(e) => updateAccessory(index, "code", e.target.value)} className="field-input font-mono text-xs" placeholder="Código" /><input aria-label={`Cantidad accesorio ${index + 1}`} type="number" min="0" step="0.001" value={row.quantity} onChange={(e) => updateAccessory(index, "quantity", e.target.value)} className="field-input font-mono text-xs" placeholder="Cantidad" /></div></div>)}</div></div> : null}
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="ordersPerHour">Orden x hora</label><input id="ordersPerHour" type="number" min="0" step="0.001" value={ordersPerHour} onChange={(e) => setOrdersPerHour(e.target.value)} placeholder="Ej. 10" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="piecesPerHour">Piezas x hora</label><input id="piecesPerHour" type="number" min="0" step="0.001" value={piecesPerHour} onChange={(e) => setPiecesPerHour(e.target.value)} placeholder="Ej. 33" className="field-input font-mono" /></div></div>

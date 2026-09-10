@@ -127,6 +127,12 @@ function normalizeValue(value: unknown) {
   return String(value ?? "").trim().toUpperCase();
 }
 
+function supabaseErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) return String((error as { message?: unknown }).message || fallback);
+  return fallback;
+}
+
 export async function findAccessoryReferences(sh: string, profile: Profile) {
   if (!supabase) throw new Error("Supabase no está configurado.");
   const normalizedSh = normalizeValue(sh);
@@ -141,7 +147,7 @@ export async function findAccessoryReferences(sh: string, profile: Profile) {
     .order("fecha_activacion", { ascending: false, nullsFirst: false })
     .order("fecha_carga", { ascending: false })
     .limit(1);
-  if (documentError) throw documentError;
+  if (documentError) throw new Error(`documentos_maestros: ${supabaseErrorMessage(documentError, "no fue posible leer el documento activo")}`);
   const documentId = documents?.[0]?.id;
   if (!documentId) return [] as AccessoryReference[];
 
@@ -152,7 +158,7 @@ export async function findAccessoryReferences(sh: string, profile: Profile) {
     .eq("sh_normalizado", normalizedSh)
     .eq("activo", true)
     .order("numero_fila_origen", { ascending: true });
-  if (error) throw error;
+  if (error) throw new Error(`datos_referencia: ${supabaseErrorMessage(error, "no fue posible leer las referencias")}`);
 
   const seen = new Set<string>();
   return ((data || []) as Array<{ id: string; numero_parte_original: string; cantidad_esperada: number | null; numero_fila_origen: number | null }>)
@@ -180,7 +186,7 @@ export async function findExistingShRecords(sh: string) {
     .eq("sh_normalizada", normalizedSh)
     .order("fecha_hora_captura", { ascending: false })
     .limit(20);
-  if (error) throw error;
+  if (error) throw new Error(`registros_captura: ${supabaseErrorMessage(error, "no fue posible revisar el SH")}`);
   return (data || []) as Array<{ id: string; fecha_hora_captura: string; celda: string | null }>;
 }
 
