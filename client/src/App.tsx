@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Router as WouterRouter, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { AuthGate, type AuthContextValue } from "./components/AuthGate";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -9,11 +9,13 @@ import Home from "./pages/Home";
 
 function Router() {
   return (
-    <Switch>
-      <Route path="/" component={AuthenticatedHome} />
-      <Route path="/404" component={NotFound} />
-      <Route component={NotFound} />
-    </Switch>
+    <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "") || "/"}>
+      <Switch>
+        <Route path="/" component={AuthenticatedHome} />
+        <Route path="/404" component={NotFound} />
+        <Route component={NotFound} />
+      </Switch>
+    </WouterRouter>
   );
 }
 
