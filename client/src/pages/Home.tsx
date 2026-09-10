@@ -70,99 +70,6 @@ type RecordItem = {
   document: string;
 };
 
-const knownMaterials = [
-  { order: "OP-240981", part: "PN-RA-4102", sh: "SH-MTY-01" },
-  { order: "OP-240982", part: "PN-KX-8801", sh: "SH-MTY-01" },
-  { order: "OP-240983", part: "PN-FL-2009", sh: "SH-SLT-02" },
-  { order: "OP-240984", part: "PN-DX-5140", sh: "SH-MTY-01" },
-];
-
-const startingRecords: RecordItem[] = [
-  {
-    id: "1001",
-    time: "09:18",
-    date: "10 Sep 2026",
-    order: "OP-240981",
-    part: "PN-RA-4102",
-    sh: "SH-MTY-01",
-    operator: "María López",
-    match: "Coincide",
-    review: "Pendiente",
-    document: "Producción · Septiembre v3",
-  },
-  {
-    id: "1002",
-    time: "09:11",
-    date: "10 Sep 2026",
-    order: "OP-240983",
-    part: "PN-FL-2009",
-    sh: "SH-SLT-02",
-    operator: "Carlos Méndez",
-    match: "Coincide",
-    review: "Confirmado",
-    document: "Producción · Septiembre v3",
-  },
-  {
-    id: "1003",
-    time: "08:56",
-    date: "10 Sep 2026",
-    order: "OP-240982",
-    part: "PN-KX-8801",
-    sh: "SH-MTY-02",
-    operator: "María López",
-    match: "Discrepancia",
-    reason: "SH diferente al documento maestro",
-    review: "Pendiente",
-    document: "Producción · Septiembre v3",
-  },
-  {
-    id: "1004",
-    time: "08:43",
-    date: "10 Sep 2026",
-    order: "OP-240976",
-    part: "PN-DR-1208",
-    sh: "SH-MTY-01",
-    operator: "Hugo Ríos",
-    match: "No encontrado",
-    reason: "La orden no existe en la versión activa",
-    review: "Pendiente",
-    document: "Producción · Septiembre v3",
-  },
-  {
-    id: "1005",
-    time: "08:20",
-    date: "10 Sep 2026",
-    order: "OP-240984",
-    part: "PN-DX-5140",
-    sh: "SH-MTY-01",
-    operator: "Carlos Méndez",
-    match: "Coincide",
-    review: "Confirmado",
-    document: "Producción · Septiembre v3",
-  },
-  {
-    id: "1006",
-    time: "08:08",
-    date: "10 Sep 2026",
-    order: "OP-240979",
-    part: "PN-AQ-3020",
-    sh: "SH-MTY-01",
-    operator: "Hugo Ríos",
-    match: "Duplicado",
-    reason: "Combinación capturada anteriormente en este turno",
-    review: "Cancelado",
-    document: "Producción · Septiembre v3",
-  },
-];
-
-const hourlyData = [
-  { hour: "06:00", registros: 26, coincide: 24 },
-  { hour: "07:00", registros: 38, coincide: 32 },
-  { hour: "08:00", registros: 52, coincide: 43 },
-  { hour: "09:00", registros: 21, coincide: 18 },
-  { hour: "10:00", registros: 0, coincide: 0 },
-  { hour: "11:00", registros: 0, coincide: 0 },
-];
 
 const navigation: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "panel", label: "Panel de control", icon: LayoutDashboard },
@@ -183,9 +90,18 @@ function getTime() {
   }).format(new Date());
 }
 
-function normalize(value: string) {
-  return value.trim().toUpperCase();
+function buildHourlyData(records: RecordItem[]) {
+  return Array.from({ length: 12 }, (_, index) => {
+    const hour = index + 6;
+    const hourRecords = records.filter((record) => Number(record.time.split(":")[0]) === hour);
+    return {
+      hour: `${String(hour).padStart(2, "0")}:00`,
+      registros: hourRecords.length,
+      coincide: hourRecords.filter((record) => record.match === "Coincide").length,
+    };
+  });
 }
+
 
 function logoMarkClass(size = "h-10 w-10") {
   return `${size} rounded-xl bg-gradient-to-br from-cyan-300 to-emerald-300 text-[#062131] flex items-center justify-center shadow-[0_8px_24px_rgba(49,226,190,0.24)]`;
@@ -260,6 +176,7 @@ function SectionHeader({ eyebrow, title, description, action }: { eyebrow: strin
 
 function Panel({ records, setView, activeDocument }: { records: RecordItem[]; setView: (view: View) => void; activeDocument?: MasterDocument | null }) {
   const matched = records.filter((r) => r.match === "Coincide").length;
+  const hourlyData = buildHourlyData(records);
   const pending = records.filter((r) => r.review === "Pendiente").length;
   const confirmed = records.filter((r) => r.review === "Confirmado").length;
 
@@ -273,8 +190,8 @@ function Panel({ records, setView, activeDocument }: { records: RecordItem[]; se
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Capturas de hoy" value={`${137 + records.length}`} hint="+12% frente al turno anterior" color="cyan" icon={PackageCheck} />
-        <MetricCard label="Match correcto" value="91.8%" hint={`${matched} de ${records.length} en las últimas capturas`} color="emerald" icon={CircleCheck} />
+        <MetricCard label="Capturas de hoy" value={`${records.length}`} hint="Registros sincronizados desde Supabase" color="cyan" icon={PackageCheck} />
+        <MetricCard label="Match correcto" value={`${records.length ? ((matched / records.length) * 100).toFixed(1) : "0.0"}%`} hint={`${matched} de ${records.length} registros cargados`} color="emerald" icon={CircleCheck} />
         <MetricCard label="Por revisar" value={`${pending}`} hint="Requieren decisión de supervisor" color="amber" icon={Clock3} />
         <MetricCard label="Confirmados" value={`${confirmed}`} hint="Materiales con salida validada" color="rose" icon={ShieldCheck} />
       </div>
@@ -313,12 +230,12 @@ function Panel({ records, setView, activeDocument }: { records: RecordItem[]; se
           <div className="mt-6 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
             <div className="flex items-center gap-3">
               <div className="rounded-xl bg-white p-2 text-emerald-600 shadow-sm"><FileSpreadsheet className="h-5 w-5" /></div>
-              <div className="min-w-0"><p className="truncate text-sm font-bold text-emerald-950">{activeDocument?.nombre_archivo || "Producción · Septiembre v3"}</p><p className="mt-0.5 text-xs text-emerald-700">{activeDocument ? `${activeDocument.filas_validas.toLocaleString("es-MX")} relaciones válidas` : "1,284 relaciones válidas · demo"}</p></div>
+              <div className="min-w-0"><p className="truncate text-sm font-bold text-emerald-950">{activeDocument?.nombre_archivo || "Sin documento activo"}</p><p className="mt-0.5 text-xs text-emerald-700">{activeDocument ? `${activeDocument.filas_validas.toLocaleString("es-MX")} relaciones válidas` : "Carga un documento maestro para activar el match"}</p></div>
             </div>
           </div>
           <div className="mt-5 space-y-3">
-            <div className="flex justify-between text-xs"><span className="text-slate-500">Activado por</span><span className="font-semibold text-slate-700">Ana Torres</span></div>
-            <div className="flex justify-between text-xs"><span className="text-slate-500">Última actualización</span><span className="font-semibold text-slate-700">Hoy · 05:48</span></div>
+            <div className="flex justify-between text-xs"><span className="text-slate-500">Activado por</span><span className="font-semibold text-slate-700">—</span></div>
+            <div className="flex justify-between text-xs"><span className="text-slate-500">Última actualización</span><span className="font-semibold text-slate-700">—</span></div>
             <button onClick={() => setView("documentos")} className="mt-1 inline-flex items-center gap-1.5 text-xs font-bold text-[#0e7f8d] transition hover:text-[#075660]">Ver documento <ArrowUpRight className="h-3.5 w-3.5" /></button>
           </div>
         </div>
@@ -374,18 +291,11 @@ function Capture({ onCapture, user, profile, liveMode, operatorName }: { onCaptu
       toast.error("Completa orden, número de parte y SH para continuar.");
       return;
     }
-    const normalized = { order: normalize(order), part: normalize(part), sh: normalize(sh) };
-    const exact = knownMaterials.find((material) => material.order === normalized.order && material.part === normalized.part && material.sh === normalized.sh);
-    const sameOrder = knownMaterials.find((material) => material.order === normalized.order);
-    const duplicate = lastCapture && lastCapture.order === normalized.order && lastCapture.part === normalized.part && lastCapture.sh === normalized.sh;
-    let match: MatchState = "Coincide";
-    let reason: string | undefined;
+    if (!liveMode || !supabase) {
+      toast.error("Supabase no está conectado. Configura las variables del despliegue para comenzar a registrar datos reales.");
+      return;
+    }
 
-    if (duplicate) { match = "Duplicado"; reason = "La misma combinación se capturó durante esta sesión."; }
-    else if (!exact && sameOrder) { match = "Discrepancia"; reason = sameOrder.part !== normalized.part ? "Número de parte diferente al documento maestro." : "SH diferente al documento maestro."; }
-    else if (!exact) { match = "No encontrado"; reason = "La combinación no existe en el documento maestro activo."; }
-
-    if (liveMode && supabase) {
       const { data, error } = await supabase.rpc("registrar_captura", {
         p_orden: order,
         p_numero_parte: part,
@@ -411,26 +321,6 @@ function Capture({ onCapture, user, profile, liveMode, operatorName }: { onCaptu
       setOrder(""); setPart(""); setSh("");
       toast.success(record.match === "Coincide" ? "Match correcto registrado" : "Captura registrada para revisión");
       return;
-    }
-
-    const now = new Date();
-    const record: RecordItem = {
-      id: String(Date.now()),
-      time: now.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }),
-      date: now.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }),
-      order: normalized.order,
-      part: normalized.part,
-      sh: normalized.sh,
-      operator: operatorName,
-      match,
-      reason,
-      review: "Pendiente",
-      document: "Producción · Septiembre v3",
-    };
-    onCapture(record);
-    setLastCapture(record);
-    setOrder(""); setPart(""); setSh("");
-    toast.success(match === "Coincide" ? "Match correcto registrado" : "Captura registrada para revisión");
   }
 
   return (
@@ -448,7 +338,7 @@ function Capture({ onCapture, user, profile, liveMode, operatorName }: { onCaptu
         </form>
 
         <aside className="space-y-5">
-          <div className="soft-card p-5 sm:p-6"><p className="eyebrow">Contexto de validación</p><div className="mt-5 space-y-4"><div className="flex gap-3"><div className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Versión activa</p><p className="mt-1 text-xs text-slate-500">Producción · Septiembre v3</p></div></div><div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Usuario</p><p className="mt-1 text-sm font-semibold text-slate-700">María López</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Turno</p><p className="mt-1 text-sm font-semibold text-slate-700">Primer turno</p></div></div><p className="text-xs leading-5 text-slate-500">La hora se toma desde el navegador en este prototipo. En producción debe provenir del servidor.</p></div></div>
+          <div className="soft-card p-5 sm:p-6"><p className="eyebrow">Contexto de validación</p><div className="mt-5 space-y-4"><div className="flex gap-3"><div className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Versión activa</p><p className="mt-1 text-xs text-slate-500">Documento maestro conectado</p></div></div><div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Usuario</p><p className="mt-1 text-sm font-semibold text-slate-700">{operatorName}</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Turno</p><p className="mt-1 text-sm font-semibold text-slate-700">Asignado por Supabase</p></div></div><p className="text-xs leading-5 text-slate-500">La hora exacta y el resultado del match se registran mediante la función segura de Supabase.</p></div></div>
           {lastCapture ? <ResultCard record={lastCapture} /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center"><PackageCheck className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-600">Esperando lectura</p><p className="mx-auto mt-1 max-w-[220px] text-xs leading-5 text-slate-400">El resultado del match aparecerá aquí después de registrar el material.</p></div>}
         </aside>
       </div>
@@ -481,7 +371,7 @@ function ReviewModal({ record, onClose, onReview }: { record: RecordItem; onClos
 
 function Documents({ documents, user, profile, liveMode, onDocumentsChange }: { documents: MasterDocument[]; user: User; profile: Profile | null; liveMode: boolean; onDocumentsChange: (documents: MasterDocument[]) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [fileName, setFileName] = useState("Producción · Septiembre v3.xlsx");
+  const [fileName, setFileName] = useState("Sin archivo seleccionado");
   const [isNew, setIsNew] = useState(false);
   async function handleFile(file?: File) {
     if (!file) return;
@@ -499,26 +389,34 @@ function Documents({ documents, user, profile, liveMode, onDocumentsChange }: { 
   const activeDocument = documents.find((document) => document.estatus_importacion === "activo") || documents[0];
   return <div className="space-y-7"><SectionHeader eyebrow="Fuente de validación" title="Documentos maestros" description="Carga y revisa las versiones que definen las combinaciones válidas de orden, número de parte y SH." action={<button onClick={() => fileRef.current?.click()} className="primary-action"><UploadCloud className="h-4 w-4" />Cargar archivo</button>} />
     <input ref={fileRef} onChange={(e) => handleFile(e.target.files?.[0])} type="file" accept=".xlsx,.xls,.csv" className="hidden" />
-    <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]"><div className="soft-card p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-sm font-bold text-slate-800">Versión activa</p><p className="mt-1 text-xs text-slate-500">La fuente usada por cada match del turno.</p></div><span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-600/15"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{activeDocument?.estatus_importacion === "activo" ? "Activa" : "Sin activar"}</span></div><div className="mt-6 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-5 sm:flex-row sm:items-center"><div className="rounded-2xl bg-[#e8f7f2] p-3 text-[#0d7d6c]"><FileSpreadsheet className="h-7 w-7" /></div><div className="min-w-0 flex-1"><p className="truncate text-base font-bold text-slate-800">{activeDocument?.nombre_archivo || fileName}</p><p className="mt-1 text-xs text-slate-500">{activeDocument ? `${activeDocument.filas_validas.toLocaleString("es-MX")} filas válidas · ${activeDocument.filas_con_error} errores` : "1,284 filas válidas · demo"}</p><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-slate-500"><span>{activeDocument ? `Subido · ${new Date(activeDocument.fecha_carga).toLocaleDateString("es-MX")}` : "Subido por Ana Torres"}</span><span>{activeDocument?.estatus_importacion || "activo"}</span></div></div><button onClick={() => toast.info("La descarga requiere un bucket privado y una URL firmada.")} className="secondary-action shrink-0"><Download className="h-4 w-4" />Descargar</button></div><div className="mt-5 grid grid-cols-3 gap-3"><div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Filas</p><p className="mt-1 font-display text-xl font-semibold text-slate-800">{activeDocument?.filas_validas?.toLocaleString("es-MX") || "1,284"}</p></div><div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Errores</p><p className="mt-1 font-display text-xl font-semibold text-slate-800">{activeDocument?.filas_con_error || 0}</p></div><div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Versiones</p><p className="mt-1 font-display text-xl font-semibold text-slate-800">{documents.length || 1}</p></div></div></div>
+    <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]"><div className="soft-card p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-sm font-bold text-slate-800">Versión activa</p><p className="mt-1 text-xs text-slate-500">La fuente usada por cada match del turno.</p></div><span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-600/15"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{activeDocument?.estatus_importacion === "activo" ? "Activa" : "Sin activar"}</span></div><div className="mt-6 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-5 sm:flex-row sm:items-center"><div className="rounded-2xl bg-[#e8f7f2] p-3 text-[#0d7d6c]"><FileSpreadsheet className="h-7 w-7" /></div><div className="min-w-0 flex-1"><p className="truncate text-base font-bold text-slate-800">{activeDocument?.nombre_archivo || fileName}</p><p className="mt-1 text-xs text-slate-500">{activeDocument ? `${activeDocument.filas_validas.toLocaleString("es-MX")} filas válidas · ${activeDocument.filas_con_error} errores` : "Sin filas importadas"}</p><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-slate-500"><span>{activeDocument ? `Subido · ${new Date(activeDocument.fecha_carga).toLocaleDateString("es-MX")}` : "Sin documento cargado"}</span><span>{activeDocument?.estatus_importacion || "sin activar"}</span></div></div><button onClick={() => toast.info("La descarga requiere un bucket privado y una URL firmada.")} className="secondary-action shrink-0"><Download className="h-4 w-4" />Descargar</button></div><div className="mt-5 grid grid-cols-3 gap-3"><div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Filas</p><p className="mt-1 font-display text-xl font-semibold text-slate-800">{activeDocument?.filas_validas?.toLocaleString("es-MX") || "0"}</p></div><div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Errores</p><p className="mt-1 font-display text-xl font-semibold text-slate-800">{activeDocument?.filas_con_error || 0}</p></div><div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Versiones</p><p className="mt-1 font-display text-xl font-semibold text-slate-800">{documents.length}</p></div></div></div>
       <div onClick={() => fileRef.current?.click()} className="flex min-h-[310px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-cyan-200 bg-cyan-50/30 p-8 text-center transition hover:border-cyan-400 hover:bg-cyan-50"><div className="rounded-2xl bg-white p-4 text-[#0e7f8d] shadow-sm"><UploadCloud className="h-7 w-7" /></div><p className="mt-5 text-sm font-bold text-slate-700">Cargar una nueva versión</p><p className="mt-2 max-w-xs text-xs leading-5 text-slate-500">Arrastra un archivo CSV o Excel, o haz clic para seleccionarlo. Las filas serán validadas antes de activar la versión.</p><span className="mt-5 rounded-lg bg-[#0e7f8d] px-3 py-2 text-xs font-bold text-white">Seleccionar archivo</span></div></div>
-    <div className="soft-card overflow-hidden"><div className="flex items-center justify-between border-b border-slate-100 px-5 py-5 sm:px-6"><div><p className="text-sm font-bold text-slate-800">Vista previa de referencia</p><p className="mt-1 text-xs text-slate-500">Ejemplo de las columnas que usaría el match automático.</p></div><span className="text-xs font-semibold text-slate-500">Mostrando 4 de 1,284 filas</span></div><div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left"><thead className="bg-slate-50 text-[10px] font-bold uppercase tracking-[.12em] text-slate-500"><tr><th className="px-6 py-3">Fila</th><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Número de parte</th><th className="px-5 py-3">SH</th><th className="px-6 py-3">Estado</th></tr></thead><tbody className="divide-y divide-slate-100">{knownMaterials.map((item, index) => <tr key={item.order}><td className="px-6 py-4 text-xs text-slate-500">{index + 2}</td><td className="px-5 py-4 font-mono text-xs font-bold text-slate-700">{item.order}</td><td className="px-5 py-4 font-mono text-xs text-slate-600">{item.part}</td><td className="px-5 py-4 font-mono text-xs text-slate-600">{item.sh}</td><td className="px-6 py-4"><StatusPill state="Confirmado" /></td></tr>)}</tbody></table></div></div>
-    {isNew ? <p className="rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs text-cyan-800"><strong>Simulación activa:</strong> el archivo seleccionado se muestra en la interfaz, pero no se guarda ni se procesa en un servidor.</p> : null}</div>;
+    <div className="soft-card overflow-hidden"><div className="flex items-center justify-between border-b border-slate-100 px-5 py-5 sm:px-6"><div><p className="text-sm font-bold text-slate-800">Vista previa de referencia</p><p className="mt-1 text-xs text-slate-500">Filas disponibles en el documento maestro activo.</p></div><span className="text-xs font-semibold text-slate-500">{documents.length ? "Documento disponible" : "Sin documento"}</span></div><div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left"><thead className="bg-slate-50 text-[10px] font-bold uppercase tracking-[.12em] text-slate-500"><tr><th className="px-6 py-3">Fila</th><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Número de parte</th><th className="px-5 py-3">SH</th><th className="px-6 py-3">Estado</th></tr></thead><tbody className="divide-y divide-slate-100"><tr><td colSpan={5} className="px-6 py-8 text-center text-xs text-slate-500">{documents.length ? "Consulta las filas del documento maestro activo desde Supabase." : "Aún no hay un documento maestro cargado."}</td></tr></tbody></table></div></div>
+    {isNew ? <p className="rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs text-cyan-800"><strong>Importación completada:</strong> el documento fue procesado y enviado a Supabase.</p> : null}</div>;
 }
 
 function Reports({ records }: { records: RecordItem[] }) {
   const [range, setRange] = useState("Turno actual");
   const matches = records.filter((r) => r.match === "Coincide").length;
-  const rate = Math.round((matches / records.length) * 100);
+  const rate = records.length ? Math.round((matches / records.length) * 100) : 0;
+  const hourlyData = buildHourlyData(records);
+  const operatorStats = Array.from(records.reduce((map, record) => {
+    const current = map.get(record.operator) || { name: record.operator, total: 0, matchCount: 0 };
+    current.total += 1;
+    if (record.match === "Coincide") current.matchCount += 1;
+    map.set(record.operator, current);
+    return map;
+  }, new Map<string, { name: string; total: number; matchCount: number }>()).values()).map((person) => ({ ...person, match: person.total ? Math.round((person.matchCount / person.total) * 100) : 0 }));
   function exportCsv() { const content = ["Hora,Orden,Numero de parte,SH,Operador,Match,Revision", ...records.map((r) => [r.time, r.order, r.part, r.sh, r.operator, r.match, r.review].join(","))].join("\n"); const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8;" })); link.download = "reporte-trazabilidad.csv"; link.click(); URL.revokeObjectURL(link.href); toast.success("Reporte CSV descargado."); }
   return <div className="space-y-7"><SectionHeader eyebrow="Indicadores operativos" title="Reportes y productividad" description="Consulta el desempeño hora por hora y exporta la información visible del prototipo." action={<div className="flex gap-2"><select value={range} onChange={(e) => setRange(e.target.value)} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-cyan-500"><option>Turno actual</option><option>Hoy</option><option>Esta semana</option></select><button onClick={exportCsv} className="primary-action"><Download className="h-4 w-4" />Exportar CSV</button></div>} />
     <div className="grid gap-4 sm:grid-cols-3"><MetricCard label="Tasa de match" value={`${rate}%`} hint="Combinaciones correctas en la muestra" color="emerald" icon={CircleCheck} /><MetricCard label="Discrepancias" value={`${records.filter((r) => r.match === "Discrepancia" || r.match === "No encontrado").length}`} hint="Registros que requieren atención" color="rose" icon={CircleAlert} /><MetricCard label="Productividad" value="17.4/h" hint="Promedio de capturas por operador" color="cyan" icon={UsersRound} /></div>
     <div className="soft-card p-5 sm:p-6"><div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-bold text-slate-800">Volumen y calidad de captura</p><p className="mt-1 text-xs text-slate-500">Comparativo de registros totales y coincidencias por bloque horario.</p></div><div className="mt-3 flex gap-4 text-[11px] font-semibold text-slate-500"><span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#0e7f8d]" />Capturas</span><span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#35c79e]" />Matches</span></div></div><div className="mt-6 h-[330px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={hourlyData} margin={{ top: 10, right: 12, bottom: 0, left: -18 }}><CartesianGrid vertical={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis dataKey="hour" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 11 }} dy={8} /><YAxis tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 11 }} /><Tooltip cursor={{ fill: "#f1f7f8" }} contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", boxShadow: "0 12px 24px rgba(15, 43, 56, .12)", fontSize: 12 }} /><Bar dataKey="registros" name="Capturas" fill="#0e7f8d" radius={[6, 6, 0, 0]} /><Bar dataKey="coincide" name="Matches" fill="#35c79e" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
-    <div className="grid gap-5 xl:grid-cols-2"><div className="soft-card p-5 sm:p-6"><p className="text-sm font-bold text-slate-800">Desempeño por operador</p><div className="mt-5 space-y-4">{[{ name: "María López", total: 48, match: 95 }, { name: "Carlos Méndez", total: 44, match: 91 }, { name: "Hugo Ríos", total: 39, match: 87 }].map((person) => <div key={person.name}><div className="flex justify-between text-xs"><span className="font-semibold text-slate-700">{person.name}</span><span className="text-slate-500">{person.total} capturas · {person.match}% match</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-[#0e7f8d] to-[#35c79e]" style={{ width: `${person.match}%` }} /></div></div>)}</div></div><div className="soft-card p-5 sm:p-6"><p className="text-sm font-bold text-slate-800">Lectura del turno</p><div className="mt-5 space-y-4"><div className="flex gap-3 rounded-xl bg-emerald-50 p-3"><CircleCheck className="h-5 w-5 shrink-0 text-emerald-600" /><div><p className="text-xs font-bold text-emerald-900">Calidad dentro de objetivo</p><p className="mt-1 text-xs leading-5 text-emerald-700">La tasa de match se mantiene por encima del objetivo operativo de 90%.</p></div></div><div className="flex gap-3 rounded-xl bg-amber-50 p-3"><Clock3 className="h-5 w-5 shrink-0 text-amber-700" /><div><p className="text-xs font-bold text-amber-900">Revisión pendiente</p><p className="mt-1 text-xs leading-5 text-amber-700">Prioriza la confirmación de capturas pendientes para cerrar la trazabilidad de salida.</p></div></div></div></div></div></div>;
+    <div className="grid gap-5 xl:grid-cols-2"><div className="soft-card p-5 sm:p-6"><p className="text-sm font-bold text-slate-800">Desempeño por operador</p><div className="mt-5 space-y-4">{operatorStats.map((person) => <div key={person.name}><div className="flex justify-between text-xs"><span className="font-semibold text-slate-700">{person.name}</span><span className="text-slate-500">{person.total} capturas · {person.match}% match</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-[#0e7f8d] to-[#35c79e]" style={{ width: `${person.match}%` }} /></div></div>)}</div></div><div className="soft-card p-5 sm:p-6"><p className="text-sm font-bold text-slate-800">Lectura del turno</p><div className="mt-5 space-y-4"><div className="flex gap-3 rounded-xl bg-emerald-50 p-3"><CircleCheck className="h-5 w-5 shrink-0 text-emerald-600" /><div><p className="text-xs font-bold text-emerald-900">Calidad dentro de objetivo</p><p className="mt-1 text-xs leading-5 text-emerald-700">La tasa de match se mantiene por encima del objetivo operativo de 90%.</p></div></div><div className="flex gap-3 rounded-xl bg-amber-50 p-3"><Clock3 className="h-5 w-5 shrink-0 text-amber-700" /><div><p className="text-xs font-bold text-amber-900">Revisión pendiente</p><p className="mt-1 text-xs leading-5 text-amber-700">Prioriza la confirmación de capturas pendientes para cerrar la trazabilidad de salida.</p></div></div></div></div></div></div>;
 }
 
 function HistoryView({ records }: { records: RecordItem[] }) {
   return <div className="space-y-7"><SectionHeader eyebrow="Auditoría operativa" title="Historial de registros" description="Consulta la trazabilidad de cada captura, incluyendo el resultado automático y la decisión de supervisión." action={<button onClick={() => toast.info("Filtros avanzados disponibles al conectar la base de datos.")} className="secondary-action"><Filter className="h-4 w-4" />Filtros avanzados</button>} />
-    <div className="soft-card overflow-hidden"><div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><p className="text-sm font-bold text-slate-800">Registros del 10 de septiembre</p><p className="mt-1 text-xs text-slate-500">{records.length} movimientos mostrados · datos de demostración.</p></div><div className="relative w-full sm:w-72"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input placeholder="Buscar en historial" className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs outline-none transition focus:border-cyan-500 focus:ring-3 focus:ring-cyan-100" /></div></div><div className="overflow-x-auto"><table className="w-full min-w-[860px] text-left"><thead className="bg-slate-50/80 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-6 py-3">Fecha / hora</th><th className="px-5 py-3">Orden / material</th><th className="px-5 py-3">SH</th><th className="px-5 py-3">Usuario</th><th className="px-5 py-3">Match</th><th className="px-6 py-3">Revisado</th></tr></thead><tbody className="divide-y divide-slate-100">{records.map((record) => <tr key={record.id} className="transition hover:bg-slate-50/70"><td className="px-6 py-4"><p className="text-xs font-semibold text-slate-700">{record.date}</p><p className="mt-0.5 text-xs text-slate-500">{record.time}</p></td><td className="px-5 py-4"><p className="text-sm font-bold text-slate-800">{record.order}</p><p className="mt-0.5 font-mono text-[11px] text-slate-500">{record.part}</p></td><td className="px-5 py-4 font-mono text-xs text-slate-600">{record.sh}</td><td className="px-5 py-4 text-sm text-slate-600">{record.operator}</td><td className="px-5 py-4"><StatusPill state={record.match} /></td><td className="px-6 py-4"><StatusPill state={record.review} /></td></tr>)}</tbody></table></div></div></div>;
+    <div className="soft-card overflow-hidden"><div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><p className="text-sm font-bold text-slate-800">Registros cargados</p><p className="mt-1 text-xs text-slate-500">{records.length} movimientos sincronizados desde Supabase.</p></div><div className="relative w-full sm:w-72"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input placeholder="Buscar en historial" className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs outline-none transition focus:border-cyan-500 focus:ring-3 focus:ring-cyan-100" /></div></div><div className="overflow-x-auto"><table className="w-full min-w-[860px] text-left"><thead className="bg-slate-50/80 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-6 py-3">Fecha / hora</th><th className="px-5 py-3">Orden / material</th><th className="px-5 py-3">SH</th><th className="px-5 py-3">Usuario</th><th className="px-5 py-3">Match</th><th className="px-6 py-3">Revisado</th></tr></thead><tbody className="divide-y divide-slate-100">{records.map((record) => <tr key={record.id} className="transition hover:bg-slate-50/70"><td className="px-6 py-4"><p className="text-xs font-semibold text-slate-700">{record.date}</p><p className="mt-0.5 text-xs text-slate-500">{record.time}</p></td><td className="px-5 py-4"><p className="text-sm font-bold text-slate-800">{record.order}</p><p className="mt-0.5 font-mono text-[11px] text-slate-500">{record.part}</p></td><td className="px-5 py-4 font-mono text-xs text-slate-600">{record.sh}</td><td className="px-5 py-4 text-sm text-slate-600">{record.operator}</td><td className="px-5 py-4"><StatusPill state={record.match} /></td><td className="px-6 py-4"><StatusPill state={record.review} /></td></tr>)}</tbody></table></div></div></div>;
 }
 
 function SettingsView() {
@@ -527,7 +425,7 @@ function SettingsView() {
 
 export default function Home({ user, profile, liveMode, signOut }: AuthContextValue) {
   const [view, setView] = useState<View>("panel");
-  const [records, setRecords] = useState<RecordItem[]>(startingRecords);
+  const [records, setRecords] = useState<RecordItem[]>([]);
   const [documents, setDocuments] = useState<MasterDocument[]>([]);
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(profile);
   const [dataLoading, setDataLoading] = useState(liveMode);
@@ -535,7 +433,7 @@ export default function Home({ user, profile, liveMode, signOut }: AuthContextVa
   const [mobileMenu, setMobileMenu] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
-  const operatorName = currentProfile?.nombre_completo || user.email?.split("@")[0] || "María López";
+  const operatorName = currentProfile?.nombre_completo || user.email?.split("@")[0] || "Usuario";
   const isAdmin = currentProfile?.rol === "administrador";
 
   useEffect(() => { const timer = window.setInterval(() => setClock(getTime()), 30_000); return () => window.clearInterval(timer); }, []);
@@ -582,10 +480,10 @@ export default function Home({ user, profile, liveMode, signOut }: AuthContextVa
       <ProfileMenu name={operatorName} role={currentProfile?.rol || "Operador"} isAdmin={isAdmin} open={profileMenuOpen} onToggle={() => setProfileMenuOpen((open) => !open)} onEditProfile={() => { setProfileMenuOpen(false); if (currentProfile) setProfileEditorOpen(true); else toast.info("El modo demo no tiene un perfil persistente."); }} onManageUsers={() => { setProfileMenuOpen(false); setView("usuarios"); }} onSignOut={() => { setProfileMenuOpen(false); void signOut(); }} />
     </aside>
     {mobileMenu ? <button aria-label="Cerrar menú" onClick={() => setMobileMenu(false)} className="fixed inset-0 z-30 bg-slate-950/35 lg:hidden" /> : null}
-    <main className="relative min-h-screen lg:pl-[278px]"><header className="sticky top-0 z-20 flex h-[74px] items-center justify-between border-b border-slate-200/80 bg-[#f9fbfb]/85 px-4 backdrop-blur-xl sm:px-7 lg:px-9"><div className="flex items-center gap-3"><button onClick={() => setMobileMenu(true)} aria-label="Abrir menú" className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"><LayoutDashboard className="h-5 w-5" /></button><div><p className="text-xs font-bold text-slate-700 sm:text-sm">{activeTitle}</p><p className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">Planta Monterrey · Primer turno</p></div></div><div className="flex items-center gap-3"><div className="hidden text-right sm:block"><p className="text-xs font-semibold capitalize text-slate-700">{clock}</p><p className="mt-0.5 text-[10px] text-slate-400">Hora de estación</p></div><button onClick={() => toast.info("No hay notificaciones nuevas en esta demostración.")} className="relative rounded-xl border border-slate-200 bg-white p-2.5 text-slate-500 shadow-sm transition hover:border-cyan-200 hover:text-[#0e7f8d]"><Bell className="h-4 w-4" /><span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-amber-400 ring-2 ring-white" /></button></div></header>
+    <main className="relative min-h-screen lg:pl-[278px]"><header className="sticky top-0 z-20 flex h-[74px] items-center justify-between border-b border-slate-200/80 bg-[#f9fbfb]/85 px-4 backdrop-blur-xl sm:px-7 lg:px-9"><div className="flex items-center gap-3"><button onClick={() => setMobileMenu(true)} aria-label="Abrir menú" className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"><LayoutDashboard className="h-5 w-5" /></button><div><p className="text-xs font-bold text-slate-700 sm:text-sm">{activeTitle}</p><p className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">Planta Monterrey · Primer turno</p></div></div><div className="flex items-center gap-3"><div className="hidden text-right sm:block"><p className="text-xs font-semibold capitalize text-slate-700">{clock}</p><p className="mt-0.5 text-[10px] text-slate-400">Hora de estación</p></div><button onClick={() => toast.info("No hay notificaciones nuevas.")} className="relative rounded-xl border border-slate-200 bg-white p-2.5 text-slate-500 shadow-sm transition hover:border-cyan-200 hover:text-[#0e7f8d]"><Bell className="h-4 w-4" /><span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-amber-400 ring-2 ring-white" /></button></div></header>
       <div className="mx-auto max-w-[1550px] px-4 py-7 sm:px-7 lg:px-9 lg:py-9">{dataLoading ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs font-semibold text-cyan-800"><div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-600 border-t-transparent" />Sincronizando con Supabase…</div> : null}{!liveMode ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800"><CircleAlert className="h-4 w-4" />Modo demo: agrega las variables de Supabase para usar datos reales.</div> : null}{view === "panel" && <Panel records={records} setView={setView} activeDocument={documents.find((document) => document.estatus_importacion === "activo")} />}{view === "captura" && <Capture onCapture={addRecord} user={user} profile={currentProfile} liveMode={liveMode} operatorName={operatorName} />}{view === "supervision" && <Supervision records={records} onReview={reviewRecord} />}{view === "documentos" && <Documents documents={documents} user={user} profile={currentProfile} liveMode={liveMode} onDocumentsChange={setDocuments} />}{view === "reportes" && <Reports records={records} />}{view === "historial" && <HistoryView records={records} />}{view === "usuarios" && <UsersAdmin liveMode={liveMode && isAdmin} currentUserId={user.id} onBack={() => setView("panel")} />}{view === "configuracion" && <SettingsView />}</div>
       {profileEditorOpen && currentProfile ? <ProfileEditorModal userId={user.id} profile={currentProfile} onClose={() => setProfileEditorOpen(false)} onSaved={(updated) => setCurrentProfile(updated)} /> : null}
-      <footer className="mx-4 border-t border-slate-200/80 py-5 text-center text-[11px] text-slate-400 sm:mx-7 lg:mx-9">TRAZA · Prototipo frontend con datos simulados · Sin base de datos ni almacenamiento persistente.</footer>
+      <footer className="mx-4 border-t border-slate-200/80 py-5 text-center text-[11px] text-slate-400 sm:mx-7 lg:mx-9">TRAZA · {liveMode ? "Datos sincronizados con Supabase" : "Modo local sin persistencia"}.</footer>
     </main>
   </div>;
 }
