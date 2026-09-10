@@ -62,6 +62,16 @@ Un operador sin celda puede elegirla una sola vez en la pestaña **Registro hora
 
 La hora no se acepta como dato editable del navegador: `fecha_hora_captura` continúa usando `now()` del servidor de Supabase.
 
+## Match por SH
+
+Para que la orden se conserve únicamente como trazabilidad y el resultado del match dependa de `SH + código/número de parte`, ejecuta también una sola vez:
+
+```text
+supabase/match-by-sh-migration.sql
+```
+
+La migración marca como duplicado el mismo `SH + número de parte` repetido el mismo día, pero permite registrar los demás accesorios del mismo SH. En el frontend, al ingresar un SH existente se muestra una advertencia; la advertencia no bloquea el registro de otro accesorio válido.
+
 ## Variables locales
 
 Copia el archivo de ejemplo:
@@ -186,6 +196,7 @@ El resultado automático y la confirmación del supervisor se mantienen separado
 | `client/src/components/ProfileAndUsers.tsx` | Menú de perfil, edición propia y administración de usuarios. |
 | `client/src/pages/Home.tsx` | Panel, captura, supervisión, documentos, reportes e historial. |
 | `supabase/hourly-register-migration.sql` | Columnas, celdas, RPC y permisos del registro hora por hora. |
+| `supabase/match-by-sh-migration.sql` | RPC que realiza el match por SH + código/número de parte. |
 | `supabase/functions/admin-users/index.ts` | Edge Function protegida para listar, crear y editar usuarios Auth. |
 | `supabase/profile-update.sql` | Policy RLS para actualizar el perfil propio. |
 | `.env.example` | Plantilla de variables públicas necesarias para Vite. |

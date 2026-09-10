@@ -39,7 +39,7 @@ import { toast } from "sonner";
 import type { User } from "@supabase/supabase-js";
 import type { AuthContextValue } from "@/components/AuthGate";
 import type { MasterDocument, Profile, ProductionCell } from "@/lib/database.types";
-import { fetchTraceData, findAccessoryReferences, importMasterDocument, mapCaptureRow, type AccessoryReference, type ReferenceRow } from "@/lib/trace-data";
+import { fetchTraceData, findAccessoryReferences, findExistingShRecords, importMasterDocument, mapCaptureRow, type AccessoryReference, type ReferenceRow } from "@/lib/trace-data";
 import { supabase } from "@/lib/supabase";
 import { ProfileEditorModal, ProfileMenu, UsersAdmin } from "@/components/ProfileAndUsers";
 
@@ -292,6 +292,7 @@ function Capture({ onCapture, user, profile, liveMode, operatorName, onProfileCh
   const [ordersPerHour, setOrdersPerHour] = useState("");
   const [piecesPerHour, setPiecesPerHour] = useState("");
   const [accessoryRows, setAccessoryRows] = useState<Array<{ reference: AccessoryReference; code: string; quantity: string }>>([]);
+  const [existingShRecords, setExistingShRecords] = useState<Array<{ id: string; fecha_hora_captura: string; celda: string | null }>>([]);
   const [lookupBusy, setLookupBusy] = useState(false);
   const [lookupError, setLookupError] = useState("");
   const [lastCapture, setLastCapture] = useState<RecordItem | null>(null);
@@ -299,25 +300,27 @@ function Capture({ onCapture, user, profile, liveMode, operatorName, onProfileCh
   const [currentHour] = useState(() => new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }));
 
   useEffect(() => {
-    if (!liveMode || !profile || !order.trim() || !sh.trim()) {
+    if (!liveMode || !profile || !sh.trim()) {
       setAccessoryRows([]);
+      setExistingShRecords([]);
       setLookupError("");
       return;
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setLookupBusy(true);
-      void findAccessoryReferences(order, sh, profile)
-        .then((references) => {
+      void Promise.all([findAccessoryReferences(sh, profile), findExistingShRecords(sh)])
+        .then(([references, existingRecords]) => {
           if (cancelled) return;
           setAccessoryRows(references.length > 1 ? references.map((reference) => ({ reference, code: reference.code, quantity: reference.expectedQuantity === null ? "" : String(reference.expectedQuantity) })) : []);
+          setExistingShRecords(existingRecords);
           setLookupError("");
         })
         .catch((error) => { if (!cancelled) setLookupError(error instanceof Error ? error.message : "No fue posible consultar los accesorios del SH."); })
         .finally(() => { if (!cancelled) setLookupBusy(false); });
     }, 450);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [liveMode, order, profile, sh]);
+  }, [liveMode, profile, sh]);
 
   async function selectCell(cell: ProductionCell) {
     if (!supabase || !profile || profile.celda) return;
@@ -375,10 +378,10 @@ function Capture({ onCapture, user, profile, liveMode, operatorName, onProfileCh
   }
 
   return <div className="space-y-7">
-    <SectionHeader eyebrow="Bitácora operativa" title="Registro hora por hora" description="Captura el SH, la cantidad, la orden y los indicadores de producción. Si el SH tiene varios accesorios, el sistema muestra una fila por cada uno." />
+    <SectionHeader eyebrow="Bitácora operativa" title="Registro hora por hora" description="Captura el SH, la cantidad, la orden y los indicadores de producción. El match se realiza por SH + código de accesorio; la orden queda como trazabilidad." />
     <div className="grid gap-5 xl:grid-cols-[1.4fr_.8fr]">
       <form onSubmit={submitCapture} className="soft-card overflow-hidden">
-        <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-7"><div className="flex items-center gap-3"><div className="rounded-xl bg-[#0e7f8d] p-2 text-white"><Clock3 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Captura de producción</p><p className="mt-0.5 text-xs text-slate-500">El match se realiza con Orden + Fulbag/accesorio + SH.</p></div></div></div>
+        <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-7"><div className="flex items-center gap-3"><div className="rounded-xl bg-[#0e7f8d] p-2 text-white"><Clock3 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Captura de producción</p><p className="mt-0.5 text-xs text-slate-500">El match se realiza con SH + Fulbag/accesorio; la orden solo se conserva como dato operativo.</p></div></div></div>
         <div className="space-y-5 p-5 sm:p-7">
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="hour">Hora registrada</label><input id="hour" value={currentHour} readOnly className="field-input bg-slate-50 font-mono" /></div><div><label className="field-label">Celda de trabajo</label><div className="flex h-[42px] items-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-700">{profile?.celda || "Sin asignar"}</div></div></div>
           {!profile?.celda ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-bold text-amber-900">Selecciona tu celda de trabajo</p><p className="mt-1 text-xs leading-5 text-amber-800">Esta selección se guarda una sola vez. Después solo un administrador podrá cambiarla.</p><div className="mt-3 grid grid-cols-2 gap-2">{(["CELDA 16", "CELDA 15", "CELDA 11", "CELDA 10"] as ProductionCell[]).map((cell) => <button key={cell} type="button" disabled={cellSaving} onClick={() => void selectCell(cell)} className="rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 transition hover:border-amber-500 hover:bg-amber-100">{cell}</button>)}</div></div> : <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">Celda asignada por sistema: <strong>{profile.celda}</strong>. Solo un administrador puede cambiarla.</div>}
@@ -386,12 +389,13 @@ function Capture({ onCapture, user, profile, liveMode, operatorName, onProfileCh
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="order">Orden de producción · match</label><input id="order" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="Ej. OP-240981" autoFocus className="field-input font-mono" /></div>{accessoryRows.length <= 1 ? <div><label className="field-label" htmlFor="part">Fulbag o accesorio · código / número de parte</label><input id="part" value={part} onChange={(e) => setPart(e.target.value)} placeholder="Ej. PGA o PN-RA-4102" className="field-input font-mono" /></div> : <div className="flex items-end rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-800">Se encontraron {accessoryRows.length} accesorios para este SH + orden.</div>}</div>
           {lookupBusy ? <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">Consultando accesorios del documento maestro…</div> : null}
           {lookupError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">No fue posible consultar accesorios: {lookupError}</div> : null}
-          {accessoryRows.length > 1 ? <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-cyan-950">Accesorios que debes capturar</p><p className="mt-1 text-xs text-cyan-800">Confirma o corrige el código y captura la cantidad de cada uno. Se guardará un match independiente por accesorio.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-cyan-800">{accessoryRows.length} encontrados</span></div><div className="mt-4 grid gap-3 md:grid-cols-2">{accessoryRows.map((row, index) => <div key={row.reference.id} className="rounded-xl border border-cyan-100 bg-white p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Accesorio {index + 1}</span>{row.reference.expectedQuantity !== null ? <span className="text-[10px] font-semibold text-slate-400">Esperado: {row.reference.expectedQuantity}</span> : null}</div><div className="grid gap-2 sm:grid-cols-2"><input aria-label={`Código accesorio ${index + 1}`} value={row.code} onChange={(e) => updateAccessory(index, "code", e.target.value)} className="field-input font-mono text-xs" placeholder="Código" /><input aria-label={`Cantidad accesorio ${index + 1}`} type="number" min="0" step="0.001" value={row.quantity} onChange={(e) => updateAccessory(index, "quantity", e.target.value)} className="field-input font-mono text-xs" placeholder="Cantidad" /></div></div>)}</div></div> : null}
+          {existingShRecords.length > 0 ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-bold text-amber-900">Este SH ya fue ingresado</p><p className="mt-1 text-xs leading-5 text-amber-800">Se encontraron {existingShRecords.length} registro(s) para <strong>{sh}</strong>. Puedes revisar el historial antes de registrar otro accesorio; si repites el mismo SH + accesorio, el sistema lo marcará como duplicado.</p></div> : null}
+          {accessoryRows.length > 1 ? <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-cyan-950">Accesorios que debes capturar</p><p className="mt-1 text-xs text-cyan-800">Se encontraron para este SH. Confirma o corrige el código y captura la cantidad de cada uno. Se guardará un match independiente por accesorio.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-cyan-800">{accessoryRows.length} encontrados</span></div><div className="mt-4 grid gap-3 md:grid-cols-2">{accessoryRows.map((row, index) => <div key={row.reference.id} className="rounded-xl border border-cyan-100 bg-white p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Accesorio {index + 1}</span>{row.reference.expectedQuantity !== null ? <span className="text-[10px] font-semibold text-slate-400">Esperado: {row.reference.expectedQuantity}</span> : null}</div><div className="grid gap-2 sm:grid-cols-2"><input aria-label={`Código accesorio ${index + 1}`} value={row.code} onChange={(e) => updateAccessory(index, "code", e.target.value)} className="field-input font-mono text-xs" placeholder="Código" /><input aria-label={`Cantidad accesorio ${index + 1}`} type="number" min="0" step="0.001" value={row.quantity} onChange={(e) => updateAccessory(index, "quantity", e.target.value)} className="field-input font-mono text-xs" placeholder="Cantidad" /></div></div>)}</div></div> : null}
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="ordersPerHour">Orden x hora</label><input id="ordersPerHour" type="number" min="0" step="0.001" value={ordersPerHour} onChange={(e) => setOrdersPerHour(e.target.value)} placeholder="Ej. 10" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="piecesPerHour">Piezas x hora</label><input id="piecesPerHour" type="number" min="0" step="0.001" value={piecesPerHour} onChange={(e) => setPiecesPerHour(e.target.value)} placeholder="Ej. 33" className="field-input font-mono" /></div></div>
           <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => { setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour(""); setAccessoryRows([]); }} className="secondary-action justify-center">Limpiar</button><button type="submit" className="primary-action justify-center"><ScanLine className="h-4 w-4" />Validar y registrar</button></div>
         </div>
       </form>
-      <aside className="space-y-5"><div className="soft-card p-5 sm:p-6"><p className="eyebrow">Contexto de validación</p><div className="mt-5 space-y-4"><div className="flex gap-3"><div className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Match de material</p><p className="mt-1 text-xs text-slate-500">Orden + Fulbag/accesorio + SH</p></div></div><div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Usuario</p><p className="mt-1 text-sm font-semibold text-slate-700">{operatorName}</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Celda</p><p className="mt-1 text-sm font-semibold text-slate-700">{profile?.celda || "Sin asignar"}</p></div></div><p className="text-xs leading-5 text-slate-500">La hora exacta y el resultado del match se registran mediante la función segura de Supabase.</p></div></div>{lastCapture ? <ResultCard record={lastCapture} /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center"><PackageCheck className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-600">Esperando lectura</p><p className="mx-auto mt-1 max-w-[220px] text-xs leading-5 text-slate-400">El resultado del match aparecerá aquí después de registrar el material.</p></div>}</aside>
+      <aside className="space-y-5"><div className="soft-card p-5 sm:p-6"><p className="eyebrow">Contexto de validación</p><div className="mt-5 space-y-4"><div className="flex gap-3"><div className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Match de material</p><p className="mt-1 text-xs text-slate-500">SH + Fulbag/accesorio</p></div></div><div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Usuario</p><p className="mt-1 text-sm font-semibold text-slate-700">{operatorName}</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Celda</p><p className="mt-1 text-sm font-semibold text-slate-700">{profile?.celda || "Sin asignar"}</p></div></div><p className="text-xs leading-5 text-slate-500">La orden se conserva para trazabilidad, pero no cambia el resultado del match.</p></div></div>{lastCapture ? <ResultCard record={lastCapture} /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center"><PackageCheck className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-600">Esperando lectura</p><p className="mx-auto mt-1 max-w-[220px] text-xs leading-5 text-slate-400">El resultado del match aparecerá aquí después de registrar el material.</p></div>}</aside>
     </div>
   </div>;
 }

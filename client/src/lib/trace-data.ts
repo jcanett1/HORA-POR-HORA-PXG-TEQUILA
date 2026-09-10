@@ -127,11 +127,10 @@ function normalizeValue(value: unknown) {
   return String(value ?? "").trim().toUpperCase();
 }
 
-export async function findAccessoryReferences(order: string, sh: string, profile: Profile) {
+export async function findAccessoryReferences(sh: string, profile: Profile) {
   if (!supabase) throw new Error("Supabase no está configurado.");
-  const normalizedOrder = normalizeValue(order);
   const normalizedSh = normalizeValue(sh);
-  if (!normalizedOrder || !normalizedSh) return [] as AccessoryReference[];
+  if (!normalizedSh) return [] as AccessoryReference[];
 
   const { data: documents, error: documentError } = await supabase
     .from("documentos_maestros")
@@ -150,7 +149,6 @@ export async function findAccessoryReferences(order: string, sh: string, profile
     .from("datos_referencia")
     .select("id, numero_parte_original, cantidad_esperada, numero_fila_origen")
     .eq("documento_id", documentId)
-    .eq("orden_normalizada", normalizedOrder)
     .eq("sh_normalizado", normalizedSh)
     .eq("activo", true)
     .order("numero_fila_origen", { ascending: true });
@@ -170,6 +168,20 @@ export async function findAccessoryReferences(order: string, sh: string, profile
       expectedQuantity: row.cantidad_esperada === null ? null : Number(row.cantidad_esperada),
       sourceRow: row.numero_fila_origen,
     }));
+}
+
+export async function findExistingShRecords(sh: string) {
+  if (!supabase) throw new Error("Supabase no está configurado.");
+  const normalizedSh = normalizeValue(sh);
+  if (!normalizedSh) return [] as Array<{ id: string; fecha_hora_captura: string; celda: string | null }>;
+  const { data, error } = await supabase
+    .from("registros_captura")
+    .select("id, fecha_hora_captura, celda")
+    .eq("sh_normalizada", normalizedSh)
+    .order("fecha_hora_captura", { ascending: false })
+    .limit(20);
+  if (error) throw error;
+  return (data || []) as Array<{ id: string; fecha_hora_captura: string; celda: string | null }>;
 }
 
 function findColumn(headers: string[], candidates: string[]) {
