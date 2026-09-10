@@ -94,6 +94,16 @@ También puedes usar **Repository secrets** si tu organización lo exige. Sin em
 
 Si el despliegue lo realiza una plataforma como Vercel, Netlify o Cloudflare Pages, registra las mismas dos variables en la configuración de Environment Variables de esa plataforma y selecciona los entornos `Production`, `Preview` y `Development` según corresponda.
 
+## GitHub Pages
+
+El repositorio incluye `.github/workflows/deploy-pages.yml`. En **Settings → Pages**, cambia **Build and deployment → Source** de `Deploy from a branch` a **GitHub Actions**. Si se deja `Legacy / main / root`, GitHub publicará este README en lugar de `dist/public`.
+
+Después del cambio, ejecuta el workflow `Deploy TRAZA to GitHub Pages` desde **Actions → Deploy TRAZA to GitHub Pages → Run workflow**, o realiza un nuevo push a `main`. La URL pública será:
+
+```text
+https://jcanett1.github.io/HORA-POR-HORA-PXG-TEQUILA/
+```
+
 ## Flujo de conexión
 
 El frontend no se conecta con una contraseña de PostgreSQL. Se conecta mediante el cliente oficial `@supabase/supabase-js` usando la URL del proyecto y la llave pública. Supabase Auth entrega el JWT de sesión. RLS utiliza `auth.uid()` para limitar las filas.
