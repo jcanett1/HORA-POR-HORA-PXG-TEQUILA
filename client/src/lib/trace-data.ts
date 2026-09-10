@@ -31,6 +31,13 @@ export type ReferenceRow = {
   activo: boolean;
 };
 
+export type AccessoryReference = {
+  id: string;
+  code: string;
+  expectedQuantity: number | null;
+  sourceRow: number | null;
+};
+
 const matchLabels: Record<string, TraceRecord["match"]> = {
   coincide: "Coincide",
   discrepancia: "Discrepancia",
@@ -118,6 +125,51 @@ function normalizeHeader(value: unknown) {
 
 function normalizeValue(value: unknown) {
   return String(value ?? "").trim().toUpperCase();
+}
+
+export async function findAccessoryReferences(order: string, sh: string, profile: Profile) {
+  if (!supabase) throw new Error("Supabase no está configurado.");
+  const normalizedOrder = normalizeValue(order);
+  const normalizedSh = normalizeValue(sh);
+  if (!normalizedOrder || !normalizedSh) return [] as AccessoryReference[];
+
+  const { data: documents, error: documentError } = await supabase
+    .from("documentos_maestros")
+    .select("id")
+    .eq("planta", profile.planta)
+    .eq("area", profile.area)
+    .eq("estatus_importacion", "activo")
+    .order("fecha_activacion", { ascending: false, nullsFirst: false })
+    .order("fecha_carga", { ascending: false })
+    .limit(1);
+  if (documentError) throw documentError;
+  const documentId = documents?.[0]?.id;
+  if (!documentId) return [] as AccessoryReference[];
+
+  const { data, error } = await supabase
+    .from("datos_referencia")
+    .select("id, numero_parte_original, cantidad_esperada, numero_fila_origen")
+    .eq("documento_id", documentId)
+    .eq("orden_normalizada", normalizedOrder)
+    .eq("sh_normalizado", normalizedSh)
+    .eq("activo", true)
+    .order("numero_fila_origen", { ascending: true });
+  if (error) throw error;
+
+  const seen = new Set<string>();
+  return ((data || []) as Array<{ id: string; numero_parte_original: string; cantidad_esperada: number | null; numero_fila_origen: number | null }>)
+    .filter((row) => {
+      const key = normalizeValue(row.numero_parte_original);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((row) => ({
+      id: row.id,
+      code: row.numero_parte_original,
+      expectedQuantity: row.cantidad_esperada === null ? null : Number(row.cantidad_esperada),
+      sourceRow: row.numero_fila_origen,
+    }));
 }
 
 function findColumn(headers: string[], candidates: string[]) {

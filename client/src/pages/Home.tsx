@@ -39,7 +39,7 @@ import { toast } from "sonner";
 import type { User } from "@supabase/supabase-js";
 import type { AuthContextValue } from "@/components/AuthGate";
 import type { MasterDocument, Profile, ProductionCell } from "@/lib/database.types";
-import { fetchTraceData, importMasterDocument, mapCaptureRow, type ReferenceRow } from "@/lib/trace-data";
+import { fetchTraceData, findAccessoryReferences, importMasterDocument, mapCaptureRow, type AccessoryReference, type ReferenceRow } from "@/lib/trace-data";
 import { supabase } from "@/lib/supabase";
 import { ProfileEditorModal, ProfileMenu, UsersAdmin } from "@/components/ProfileAndUsers";
 
@@ -251,8 +251,8 @@ function Panel({ records, setView, activeDocument }: { records: RecordItem[]; se
           <button onClick={() => setView("historial")} className="secondary-action"><HistoryIcon className="h-4 w-4" />Ver historial</button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[740px] text-left">
-            <thead className="bg-slate-50/80 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-6 py-3">Hora</th><th className="px-5 py-3">Orden / material</th><th className="px-5 py-3">SH</th><th className="px-5 py-3">Operador</th><th className="px-5 py-3">Match</th><th className="px-6 py-3">Revisión</th></tr></thead>
+          <table className="w-full min-w-[820px] text-left">
+            <thead className="bg-slate-50/80 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-6 py-3">Hora</th><th className="px-5 py-3">Celda</th><th className="px-5 py-3">Orden / material</th><th className="px-5 py-3">SH</th><th className="px-5 py-3">Operador</th><th className="px-5 py-3">Match</th><th className="px-6 py-3">Revisión</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {records.slice(0, 4).map((record) => <RecordTableRow key={record.id} record={record} />)}
             </tbody>
@@ -267,6 +267,7 @@ function RecordTableRow({ record, withActions, onReview, onOpen }: { record: Rec
   return (
     <tr className="transition hover:bg-slate-50/70">
       <td className="px-6 py-4 text-sm font-semibold text-slate-700">{record.time}</td>
+      <td className="px-5 py-4"><span className="rounded-full bg-cyan-50 px-2.5 py-1 text-[11px] font-bold text-cyan-800">{record.cell || "Sin celda"}</span></td>
       <td className="px-5 py-4"><p className="text-sm font-bold text-slate-800">{record.order}</p><p className="mt-0.5 font-mono text-[11px] text-slate-500">{record.part}</p></td>
       <td className="px-5 py-4 font-mono text-xs text-slate-600">{record.sh}</td>
       <td className="px-5 py-4 text-sm text-slate-600">{record.operator}</td>
@@ -290,9 +291,33 @@ function Capture({ onCapture, user, profile, liveMode, operatorName, onProfileCh
   const [quantity, setQuantity] = useState("");
   const [ordersPerHour, setOrdersPerHour] = useState("");
   const [piecesPerHour, setPiecesPerHour] = useState("");
+  const [accessoryRows, setAccessoryRows] = useState<Array<{ reference: AccessoryReference; code: string; quantity: string }>>([]);
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupError, setLookupError] = useState("");
   const [lastCapture, setLastCapture] = useState<RecordItem | null>(null);
   const [cellSaving, setCellSaving] = useState(false);
   const [currentHour] = useState(() => new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }));
+
+  useEffect(() => {
+    if (!liveMode || !profile || !order.trim() || !sh.trim()) {
+      setAccessoryRows([]);
+      setLookupError("");
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setLookupBusy(true);
+      void findAccessoryReferences(order, sh, profile)
+        .then((references) => {
+          if (cancelled) return;
+          setAccessoryRows(references.length > 1 ? references.map((reference) => ({ reference, code: reference.code, quantity: reference.expectedQuantity === null ? "" : String(reference.expectedQuantity) })) : []);
+          setLookupError("");
+        })
+        .catch((error) => { if (!cancelled) setLookupError(error instanceof Error ? error.message : "No fue posible consultar los accesorios del SH."); })
+        .finally(() => { if (!cancelled) setLookupBusy(false); });
+    }, 450);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [liveMode, order, profile, sh]);
 
   async function selectCell(cell: ProductionCell) {
     if (!supabase || !profile || profile.celda) return;
@@ -306,46 +331,64 @@ function Capture({ onCapture, user, profile, liveMode, operatorName, onProfileCh
 
   async function submitCapture(event: React.FormEvent) {
     event.preventDefault();
-    if (!order || !part || !sh) { toast.error("Completa Orden, Fulbag/accesorio y SH para continuar."); return; }
+    if (!order || !sh) { toast.error("Completa la Orden y el SH para continuar."); return; }
     if (!liveMode || !supabase) { toast.error("Supabase no está conectado. Configura las variables del despliegue para comenzar a registrar datos reales."); return; }
     if (!profile?.celda) { toast.error("Selecciona una celda antes de registrar materiales."); return; }
-    if (!quantity || Number(quantity) < 0 || !ordersPerHour || Number(ordersPerHour) < 0 || !piecesPerHour || Number(piecesPerHour) < 0) { toast.error("Completa Cantidad, Orden x hora y Piezas x hora con valores válidos."); return; }
+    if (!quantity && accessoryRows.length <= 1) { toast.error("Completa la cantidad del material."); return; }
+    if (!ordersPerHour || Number(ordersPerHour) < 0 || !piecesPerHour || Number(piecesPerHour) < 0) { toast.error("Completa Orden x hora y Piezas x hora con valores válidos."); return; }
 
-    const { data, error } = await supabase.rpc("registrar_captura", {
-      p_orden: order,
-      p_numero_parte: part,
-      p_sh: sh,
-      p_planta: profile.planta || "Monterrey",
-      p_area: profile.area || "Produccion",
-      p_turno_id: null,
-      p_observaciones: null,
-      p_idempotency_key: crypto.randomUUID(),
-      p_cantidad: Number(quantity),
-      p_orden_x_hora: Number(ordersPerHour),
-      p_piezas_x_hora: Number(piecesPerHour),
-    });
-    if (error) { toast.error(error.message); return; }
-    const row = Array.isArray(data) ? data[0] : data;
-    if (!row) { toast.error("Supabase no devolvió el registro creado."); return; }
-    const record = mapCaptureRow({ ...row, perfiles_usuarios: { nombre_completo: operatorName } });
-    onCapture(record);
-    setLastCapture(record);
-    setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour("");
-    toast.success(record.match === "Coincide" ? "Match correcto registrado" : "Registro hora por hora guardado para revisión");
+    const items = accessoryRows.length > 1
+      ? accessoryRows.map((row) => ({ code: row.code.trim(), quantity: row.quantity }))
+      : [{ code: part.trim(), quantity }];
+    if (items.some((item) => !item.code || !item.quantity || Number(item.quantity) < 0)) { toast.error("Cada accesorio debe tener código y cantidad válida."); return; }
+
+    const created: RecordItem[] = [];
+    for (const item of items) {
+      const { data, error } = await supabase.rpc("registrar_captura", {
+        p_orden: order,
+        p_numero_parte: item.code,
+        p_sh: sh,
+        p_planta: profile.planta || "Monterrey",
+        p_area: profile.area || "Produccion",
+        p_turno_id: null,
+        p_observaciones: accessoryRows.length > 1 ? `Accesorio del SH ${sh}` : null,
+        p_idempotency_key: crypto.randomUUID(),
+        p_cantidad: Number(item.quantity),
+        p_orden_x_hora: Number(ordersPerHour),
+        p_piezas_x_hora: Number(piecesPerHour),
+      });
+      if (error) { toast.error(`No se pudo registrar ${item.code}: ${error.message}`); return; }
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) { toast.error(`Supabase no devolvió el registro de ${item.code}.`); return; }
+      const record = mapCaptureRow({ ...row, perfiles_usuarios: { nombre_completo: operatorName } });
+      created.push(record);
+      onCapture(record);
+    }
+    const last = created[created.length - 1];
+    if (last) setLastCapture(last);
+    setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour(""); setAccessoryRows([]);
+    toast.success(created.length > 1 ? `${created.length} accesorios registrados; match guardado por separado.` : last?.match === "Coincide" ? "Match correcto registrado" : "Registro hora por hora guardado para revisión");
+  }
+
+  function updateAccessory(index: number, field: "code" | "quantity", value: string) {
+    setAccessoryRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row));
   }
 
   return <div className="space-y-7">
-    <SectionHeader eyebrow="Bitácora operativa" title="Registro hora por hora" description="Captura el SH, la cantidad, la orden y los indicadores de producción. La hora, el usuario y la celda se registran automáticamente." />
+    <SectionHeader eyebrow="Bitácora operativa" title="Registro hora por hora" description="Captura el SH, la cantidad, la orden y los indicadores de producción. Si el SH tiene varios accesorios, el sistema muestra una fila por cada uno." />
     <div className="grid gap-5 xl:grid-cols-[1.4fr_.8fr]">
       <form onSubmit={submitCapture} className="soft-card overflow-hidden">
         <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-7"><div className="flex items-center gap-3"><div className="rounded-xl bg-[#0e7f8d] p-2 text-white"><Clock3 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Captura de producción</p><p className="mt-0.5 text-xs text-slate-500">El match se realiza con Orden + Fulbag/accesorio + SH.</p></div></div></div>
         <div className="space-y-5 p-5 sm:p-7">
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="hour">Hora registrada</label><input id="hour" value={currentHour} readOnly className="field-input bg-slate-50 font-mono" /></div><div><label className="field-label">Celda de trabajo</label><div className="flex h-[42px] items-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-700">{profile?.celda || "Sin asignar"}</div></div></div>
           {!profile?.celda ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-bold text-amber-900">Selecciona tu celda de trabajo</p><p className="mt-1 text-xs leading-5 text-amber-800">Esta selección se guarda una sola vez. Después solo un administrador podrá cambiarla.</p><div className="mt-3 grid grid-cols-2 gap-2">{(["CELDA 16", "CELDA 15", "CELDA 11", "CELDA 10"] as ProductionCell[]).map((cell) => <button key={cell} type="button" disabled={cellSaving} onClick={() => void selectCell(cell)} className="rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 transition hover:border-amber-500 hover:bg-amber-100">{cell}</button>)}</div></div> : <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">Celda asignada por sistema: <strong>{profile.celda}</strong>. Solo un administrador puede cambiarla.</div>}
-          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="sh">SH</label><input id="sh" value={sh} onChange={(e) => setSh(e.target.value)} placeholder="Ej. SH2830416" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="quantity">Cantidad</label><input id="quantity" type="number" min="0" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="Ej. 6" className="field-input font-mono" /></div></div>
-          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="order">Orden de producción · match</label><input id="order" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="Ej. OP-240981" autoFocus className="field-input font-mono" /></div><div><label className="field-label" htmlFor="part">Fulbag o accesorio · código / número de parte</label><input id="part" value={part} onChange={(e) => setPart(e.target.value)} placeholder="Ej. PGA o PN-RA-4102" className="field-input font-mono" /></div></div>
+          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="sh">SH</label><input id="sh" value={sh} onChange={(e) => setSh(e.target.value)} placeholder="Ej. SH2830416" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="quantity">Cantidad total / cantidad del accesorio</label><input id="quantity" type="number" min="0" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder={accessoryRows.length > 1 ? "Se usa en captura individual" : "Ej. 6"} disabled={accessoryRows.length > 1} className="field-input font-mono disabled:bg-slate-50" /></div></div>
+          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="order">Orden de producción · match</label><input id="order" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="Ej. OP-240981" autoFocus className="field-input font-mono" /></div>{accessoryRows.length <= 1 ? <div><label className="field-label" htmlFor="part">Fulbag o accesorio · código / número de parte</label><input id="part" value={part} onChange={(e) => setPart(e.target.value)} placeholder="Ej. PGA o PN-RA-4102" className="field-input font-mono" /></div> : <div className="flex items-end rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-800">Se encontraron {accessoryRows.length} accesorios para este SH + orden.</div>}</div>
+          {lookupBusy ? <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">Consultando accesorios del documento maestro…</div> : null}
+          {lookupError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">No fue posible consultar accesorios: {lookupError}</div> : null}
+          {accessoryRows.length > 1 ? <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-cyan-950">Accesorios que debes capturar</p><p className="mt-1 text-xs text-cyan-800">Confirma o corrige el código y captura la cantidad de cada uno. Se guardará un match independiente por accesorio.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-cyan-800">{accessoryRows.length} encontrados</span></div><div className="mt-4 grid gap-3 md:grid-cols-2">{accessoryRows.map((row, index) => <div key={row.reference.id} className="rounded-xl border border-cyan-100 bg-white p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Accesorio {index + 1}</span>{row.reference.expectedQuantity !== null ? <span className="text-[10px] font-semibold text-slate-400">Esperado: {row.reference.expectedQuantity}</span> : null}</div><div className="grid gap-2 sm:grid-cols-2"><input aria-label={`Código accesorio ${index + 1}`} value={row.code} onChange={(e) => updateAccessory(index, "code", e.target.value)} className="field-input font-mono text-xs" placeholder="Código" /><input aria-label={`Cantidad accesorio ${index + 1}`} type="number" min="0" step="0.001" value={row.quantity} onChange={(e) => updateAccessory(index, "quantity", e.target.value)} className="field-input font-mono text-xs" placeholder="Cantidad" /></div></div>)}</div></div> : null}
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="ordersPerHour">Orden x hora</label><input id="ordersPerHour" type="number" min="0" step="0.001" value={ordersPerHour} onChange={(e) => setOrdersPerHour(e.target.value)} placeholder="Ej. 10" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="piecesPerHour">Piezas x hora</label><input id="piecesPerHour" type="number" min="0" step="0.001" value={piecesPerHour} onChange={(e) => setPiecesPerHour(e.target.value)} placeholder="Ej. 33" className="field-input font-mono" /></div></div>
-          <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => { setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour(""); }} className="secondary-action justify-center">Limpiar</button><button type="submit" className="primary-action justify-center"><ScanLine className="h-4 w-4" />Validar y registrar</button></div>
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => { setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour(""); setAccessoryRows([]); }} className="secondary-action justify-center">Limpiar</button><button type="submit" className="primary-action justify-center"><ScanLine className="h-4 w-4" />Validar y registrar</button></div>
         </div>
       </form>
       <aside className="space-y-5"><div className="soft-card p-5 sm:p-6"><p className="eyebrow">Contexto de validación</p><div className="mt-5 space-y-4"><div className="flex gap-3"><div className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Match de material</p><p className="mt-1 text-xs text-slate-500">Orden + Fulbag/accesorio + SH</p></div></div><div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Usuario</p><p className="mt-1 text-sm font-semibold text-slate-700">{operatorName}</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Celda</p><p className="mt-1 text-sm font-semibold text-slate-700">{profile?.celda || "Sin asignar"}</p></div></div><p className="text-xs leading-5 text-slate-500">La hora exacta y el resultado del match se registran mediante la función segura de Supabase.</p></div></div>{lastCapture ? <ResultCard record={lastCapture} /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center"><PackageCheck className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-600">Esperando lectura</p><p className="mx-auto mt-1 max-w-[220px] text-xs leading-5 text-slate-400">El resultado del match aparecerá aquí después de registrar el material.</p></div>}</aside>
@@ -366,7 +409,7 @@ function Supervision({ records, onReview }: { records: RecordItem[]; onReview: (
 
   return <div className="space-y-7"><SectionHeader eyebrow="Validación operativa" title="Bandeja de supervisión" description="Confirma la salida de material, atiende discrepancias y conserva un historial de cada decisión." action={<div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{pending} pendientes de revisar</div>} />
     <div className="soft-card overflow-hidden"><div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-wrap gap-2">{(["Todos", "Pendiente", "Discrepancia"] as const).map((item) => <button key={item} onClick={() => setFilter(item)} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${filter === item ? "bg-[#0b5362] text-white shadow-sm" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{item === "Discrepancia" ? "Con discrepancia" : item}</button>)}</div><div className="relative w-full lg:w-72"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input placeholder="Buscar orden o parte" className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs outline-none transition focus:border-cyan-500 focus:ring-3 focus:ring-cyan-100" /></div></div>
-      <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left"><thead className="bg-slate-50/80 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-6 py-3">Hora</th><th className="px-5 py-3">Orden / material</th><th className="px-5 py-3">SH</th><th className="px-5 py-3">Operador</th><th className="px-5 py-3">Match</th><th className="px-6 py-3">Revisión / acción</th></tr></thead><tbody className="divide-y divide-slate-100">{displayed.map((record) => <RecordTableRow key={record.id} record={record} withActions onReview={onReview} onOpen={setSelected} />)}</tbody></table></div></div>
+      <div className="overflow-x-auto"><table className="w-full min-w-[930px] text-left"><thead className="bg-slate-50/80 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-6 py-3">Hora</th><th className="px-5 py-3">Celda</th><th className="px-5 py-3">Orden / material</th><th className="px-5 py-3">SH</th><th className="px-5 py-3">Operador</th><th className="px-5 py-3">Match</th><th className="px-6 py-3">Revisión / acción</th></tr></thead><tbody className="divide-y divide-slate-100">{displayed.map((record) => <RecordTableRow key={record.id} record={record} withActions onReview={onReview} onOpen={setSelected} />)}</tbody></table></div></div>
     {selected ? <ReviewModal record={selected} onClose={() => setSelected(null)} onReview={(state) => { onReview(selected.id, state); setSelected(null); }} /> : null}
   </div>;
 }
@@ -412,18 +455,33 @@ function Reports({ records }: { records: RecordItem[] }) {
   const matches = records.filter((r) => r.match === "Coincide").length;
   const rate = records.length ? Math.round((matches / records.length) * 100) : 0;
   const hourlyData = buildHourlyData(records);
+  const totalQuantity = records.reduce((sum, record) => sum + record.quantity, 0);
+  const totalPieces = records.reduce((sum, record) => sum + record.piecesPerHour, 0);
+  const cellStats = Array.from(records.reduce((map, record) => {
+    const name = record.cell || "Sin celda";
+    const current = map.get(name) || { name, quantity: 0, matches: 0, records: 0 };
+    current.quantity += record.quantity;
+    current.records += 1;
+    if (record.match === "Coincide") current.matches += 1;
+    map.set(name, current);
+    return map;
+  }, new Map<string, { name: string; quantity: number; matches: number; records: number }>()).values());
   const operatorStats = Array.from(records.reduce((map, record) => {
-    const current = map.get(record.operator) || { name: record.operator, total: 0, matchCount: 0 };
+    const current = map.get(record.operator) || { name: record.operator, total: 0, quantity: 0, pieces: 0, matchCount: 0 };
     current.total += 1;
+    current.quantity += record.quantity;
+    current.pieces += record.piecesPerHour;
     if (record.match === "Coincide") current.matchCount += 1;
     map.set(record.operator, current);
     return map;
-  }, new Map<string, { name: string; total: number; matchCount: number }>()).values()).map((person) => ({ ...person, match: person.total ? Math.round((person.matchCount / person.total) * 100) : 0 }));
-  function exportCsv() { const content = ["Hora,Orden,Numero de parte,SH,Operador,Match,Revision", ...records.map((r) => [r.time, r.order, r.part, r.sh, r.operator, r.match, r.review].join(","))].join("\n"); const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8;" })); link.download = "reporte-trazabilidad.csv"; link.click(); URL.revokeObjectURL(link.href); toast.success("Reporte CSV descargado."); }
-  return <div className="space-y-7"><SectionHeader eyebrow="Indicadores operativos" title="Reportes y productividad" description="Consulta el desempeño hora por hora y exporta la información visible del prototipo." action={<div className="flex gap-2"><select value={range} onChange={(e) => setRange(e.target.value)} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-cyan-500"><option>Turno actual</option><option>Hoy</option><option>Esta semana</option></select><button onClick={exportCsv} className="primary-action"><Download className="h-4 w-4" />Exportar CSV</button></div>} />
-    <div className="grid gap-4 sm:grid-cols-3"><MetricCard label="Tasa de match" value={`${rate}%`} hint="Combinaciones correctas en la muestra" color="emerald" icon={CircleCheck} /><MetricCard label="Discrepancias" value={`${records.filter((r) => r.match === "Discrepancia" || r.match === "No encontrado").length}`} hint="Registros que requieren atención" color="rose" icon={CircleAlert} /><MetricCard label="Productividad" value="17.4/h" hint="Promedio de capturas por operador" color="cyan" icon={UsersRound} /></div>
+  }, new Map<string, { name: string; total: number; quantity: number; pieces: number; matchCount: number }>()).values()).map((person) => ({ ...person, match: person.total ? Math.round((person.matchCount / person.total) * 100) : 0 }));
+  function exportCsv() { const content = ["Hora,Celda,Orden,Numero de parte,SH,Cantidad,Orden x hora,Piezas x hora,Operador,Match,Revision", ...records.map((r) => [r.time, r.cell || "", r.order, r.part, r.sh, r.quantity, r.ordersPerHour, r.piecesPerHour, r.operator, r.match, r.review].join(","))].join("\n"); const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8;" })); link.download = "reporte-trazabilidad-hora-por-hora.csv"; link.click(); URL.revokeObjectURL(link.href); toast.success("Reporte CSV descargado."); }
+  return <div className="space-y-7"><SectionHeader eyebrow="Indicadores operativos" title="Reportes y productividad" description="Consulta el desempeño hora por hora, compara celdas y revisa lo ingresado por cada operador." action={<div className="flex gap-2"><select value={range} onChange={(e) => setRange(e.target.value)} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-cyan-500"><option>Turno actual</option><option>Hoy</option><option>Esta semana</option></select><button onClick={exportCsv} className="primary-action"><Download className="h-4 w-4" />Exportar CSV</button></div>} />
+    <div className="grid gap-4 sm:grid-cols-4"><MetricCard label="Tasa de match" value={`${rate}%`} hint="Combinaciones correctas" color="emerald" icon={CircleCheck} /><MetricCard label="Discrepancias" value={`${records.filter((r) => r.match === "Discrepancia" || r.match === "No encontrado").length}`} hint="Requieren atención" color="rose" icon={CircleAlert} /><MetricCard label="Cantidad ingresada" value={totalQuantity.toLocaleString("es-MX", { maximumFractionDigits: 3 })} hint="Suma de cantidades capturadas" color="cyan" icon={PackageCheck} /><MetricCard label="Piezas x hora" value={totalPieces.toLocaleString("es-MX", { maximumFractionDigits: 3 })} hint="Suma de productividad registrada" color="amber" icon={BarChart3} /></div>
     <div className="soft-card p-5 sm:p-6"><div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-bold text-slate-800">Volumen y calidad de captura</p><p className="mt-1 text-xs text-slate-500">Comparativo de registros totales y coincidencias por bloque horario.</p></div><div className="mt-3 flex gap-4 text-[11px] font-semibold text-slate-500"><span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#0e7f8d]" />Capturas</span><span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#35c79e]" />Matches</span></div></div><div className="mt-6 h-[330px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={hourlyData} margin={{ top: 10, right: 12, bottom: 0, left: -18 }}><CartesianGrid vertical={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis dataKey="hour" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 11 }} dy={8} /><YAxis tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 11 }} /><Tooltip cursor={{ fill: "#f1f7f8" }} contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", boxShadow: "0 12px 24px rgba(15, 43, 56, .12)", fontSize: 12 }} /><Bar dataKey="registros" name="Capturas" fill="#0e7f8d" radius={[6, 6, 0, 0]} /><Bar dataKey="coincide" name="Matches" fill="#35c79e" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
-    <div className="grid gap-5 xl:grid-cols-2"><div className="soft-card p-5 sm:p-6"><p className="text-sm font-bold text-slate-800">Desempeño por operador</p><div className="mt-5 space-y-4">{operatorStats.map((person) => <div key={person.name}><div className="flex justify-between text-xs"><span className="font-semibold text-slate-700">{person.name}</span><span className="text-slate-500">{person.total} capturas · {person.match}% match</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-[#0e7f8d] to-[#35c79e]" style={{ width: `${person.match}%` }} /></div></div>)}</div></div><div className="soft-card p-5 sm:p-6"><p className="text-sm font-bold text-slate-800">Lectura del turno</p><div className="mt-5 space-y-4"><div className="flex gap-3 rounded-xl bg-emerald-50 p-3"><CircleCheck className="h-5 w-5 shrink-0 text-emerald-600" /><div><p className="text-xs font-bold text-emerald-900">Calidad dentro de objetivo</p><p className="mt-1 text-xs leading-5 text-emerald-700">La tasa de match se mantiene por encima del objetivo operativo de 90%.</p></div></div><div className="flex gap-3 rounded-xl bg-amber-50 p-3"><Clock3 className="h-5 w-5 shrink-0 text-amber-700" /><div><p className="text-xs font-bold text-amber-900">Revisión pendiente</p><p className="mt-1 text-xs leading-5 text-amber-700">Prioriza la confirmación de capturas pendientes para cerrar la trazabilidad de salida.</p></div></div></div></div></div></div>;
+    <div className="grid gap-5 xl:grid-cols-2"><div className="soft-card p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-sm font-bold text-slate-800">Producción por celda</p><p className="mt-1 text-xs text-slate-500">Cantidad ingresada y matches por celda de trabajo.</p></div><span className="rounded-full bg-cyan-50 px-2.5 py-1 text-[11px] font-bold text-cyan-800">{cellStats.length} celdas con actividad</span></div><div className="mt-5 h-[285px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={cellStats} margin={{ top: 10, right: 8, bottom: 0, left: -12 }}><CartesianGrid vertical={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><YAxis tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", fontSize: 12 }} /><Bar dataKey="quantity" name="Cantidad ingresada" fill="#0e7f8d" radius={[5, 5, 0, 0]} /><Bar dataKey="matches" name="Matches" fill="#35c79e" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer></div></div><div className="soft-card p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-sm font-bold text-slate-800">Ingresado por operador</p><p className="mt-1 text-xs text-slate-500">Cantidad y piezas x hora reportadas por usuario.</p></div><UsersRound className="h-5 w-5 text-cyan-700" /></div><div className="mt-5 h-[285px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={operatorStats} layout="vertical" margin={{ top: 8, right: 12, bottom: 0, left: 10 }}><CartesianGrid horizontal={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><YAxis type="category" dataKey="name" width={90} tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", fontSize: 12 }} /><Bar dataKey="quantity" name="Cantidad" fill="#0e7f8d" radius={[0, 5, 5, 0]} /><Bar dataKey="matchCount" name="Matches" fill="#35c79e" radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div></div>
+    <div className="soft-card p-5 sm:p-6"><p className="text-sm font-bold text-slate-800">Detalle por operador</p><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[620px] text-left"><thead className="border-b border-slate-100 text-[10px] font-bold uppercase tracking-[.12em] text-slate-500"><tr><th className="px-3 py-3">Operador</th><th className="px-3 py-3">Capturas</th><th className="px-3 py-3">Cantidad</th><th className="px-3 py-3">Piezas x hora</th><th className="px-3 py-3">Matches</th><th className="px-3 py-3">Tasa</th></tr></thead><tbody className="divide-y divide-slate-100">{operatorStats.map((person) => <tr key={person.name}><td className="px-3 py-3 text-sm font-bold text-slate-800">{person.name}</td><td className="px-3 py-3 text-sm text-slate-600">{person.total}</td><td className="px-3 py-3 text-sm text-slate-600">{person.quantity.toLocaleString("es-MX", { maximumFractionDigits: 3 })}</td><td className="px-3 py-3 text-sm text-slate-600">{person.pieces.toLocaleString("es-MX", { maximumFractionDigits: 3 })}</td><td className="px-3 py-3 text-sm font-semibold text-emerald-700">{person.matchCount}</td><td className="px-3 py-3 text-sm font-semibold text-cyan-700">{person.match}%</td></tr>)}{operatorStats.length === 0 ? <tr><td colSpan={6} className="px-3 py-8 text-center text-xs text-slate-500">Aún no hay registros para mostrar.</td></tr> : null}</tbody></table></div></div>
+  </div>;
 }
 
 function HistoryView({ records }: { records: RecordItem[] }) {
