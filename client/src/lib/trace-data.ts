@@ -102,7 +102,7 @@ export async function fetchTraceData(user: User, profile: Profile | null) {
         .select("id, documento_id, numero_fila_origen, orden_original, numero_parte_original, sh_original, activo")
         .in("documento_id", documentIds)
         .order("numero_fila_origen", { ascending: true })
-        .limit(250)
+        .limit(5000)
     : { data: [], error: null };
   if (referencesResult.error) warnings.push(`datos_referencia: ${referencesResult.error.message}`);
 
