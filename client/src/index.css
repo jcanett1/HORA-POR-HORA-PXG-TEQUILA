@@ -73,6 +73,8 @@ button:active { transform: scale(.97); }
 .primary-action:hover { background: linear-gradient(135deg, #0a6975, #075560); box-shadow: 0 10px 22px rgba(14, 127, 141, .24); }
 .secondary-action { display: inline-flex; align-items: center; gap: .45rem; border: 1px solid #dbe7e9; border-radius: .65rem; background: rgba(255,255,255,.84); padding: .58rem .8rem; color: #4c6068; font-size: .75rem; font-weight: 800; }
 .secondary-action:hover { border-color: #b9d7dc; background: #f4fbfb; color: #0e7f8d; }
+.profile-menu-item { display: flex; width: 100%; align-items: center; gap: .65rem; border-radius: .65rem; padding: .68rem .75rem; color: #d8e7e9; font-size: .75rem; font-weight: 700; text-align: left; transition: background-color 160ms ease, color 160ms ease; }
+.profile-menu-item:hover { background: rgba(255,255,255,.09); color: white; }
 .field-label { display: block; margin-bottom: .5rem; color: #344d56; font-size: .75rem; font-weight: 800; }
 .field-input { display: block; width: 100%; border: 1px solid #d4e1e5; border-radius: .7rem; background: #fff; padding: .75rem .85rem; color: #243c45; font-size: .875rem; outline: none; transition: box-shadow 160ms ease, border-color 160ms ease; }
 .field-input::placeholder { color: #9aaab0; }

@@ -8,6 +8,8 @@ El proyecto funciona en **modo demo** cuando no existen variables de Supabase. C
 
 La aplicación puede iniciar sesión con Supabase Auth, leer el perfil y el rol desde `public.perfiles_usuarios`, consultar registros históricos y documentos maestros, registrar capturas mediante `registrar_captura()`, confirmar o rechazar capturas mediante `confirmar_revision()` y cargar CSV/XLSX desde el navegador a `documentos_maestros` y `datos_referencia`.
 
+Desde el botón del perfil, el usuario puede editar sus datos propios. Un administrador también puede ver usuarios, editar roles y estados, y crear nuevas cuentas sin cerrar su propia sesión.
+
 La carga del archivo requiere que el usuario tenga rol `supervisor` o `administrador`. El archivo original se intenta guardar en el bucket privado `documentos-maestros`; si el bucket todavía no existe, la importación de filas puede continuar, pero se mostrará una advertencia sobre Storage.
 
 ## Requisitos en Supabase
@@ -104,6 +106,35 @@ Después del cambio, ejecuta el workflow `Deploy TRAZA to GitHub Pages` desde **
 https://jcanett1.github.io/HORA-POR-HORA-PXG-TEQUILA/
 ```
 
+## Perfil y administración de usuarios
+
+Para que el usuario pueda editar su propio perfil, ejecuta una vez:
+
+```bash
+supabase db push
+```
+
+o copia el contenido de `supabase/profile-update.sql` en el SQL Editor de Supabase y ejecútalo. Esta migración concede `UPDATE` y crea una policy que solo permite editar la fila cuyo `id` coincide con `auth.uid()`.
+
+La creación y edición de usuarios Auth se realiza mediante la Edge Function `admin-users`, porque la llave `service_role` nunca debe llegar al navegador. Desde la raíz del repositorio:
+
+```bash
+supabase functions deploy admin-users --project-ref TU_PROJECT_REF
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=TU_SERVICE_ROLE_KEY --project-ref TU_PROJECT_REF
+```
+
+Supabase proporciona automáticamente `SUPABASE_URL` y `SUPABASE_ANON_KEY` a la función. La `service_role` se configura solamente como secreto de la Edge Function y no como una variable `VITE_*`.
+
+Después de desplegarla, el menú de perfil de un administrador mostrará:
+
+```text
+Editar mi perfil
+Ver usuarios
+Cerrar sesión
+```
+
+El menú de usuarios permite crear cuentas, cambiar `operador`, `supervisor` o `administrador`, activar/desactivar usuarios y actualizar planta, área y número de empleado.
+
 ## Flujo de conexión
 
 El frontend no se conecta con una contraseña de PostgreSQL. Se conecta mediante el cliente oficial `@supabase/supabase-js` usando la URL del proyecto y la llave pública. Supabase Auth entrega el JWT de sesión. RLS utiliza `auth.uid()` para limitar las filas.
@@ -136,7 +167,10 @@ El resultado automático y la confirmación del supervisor se mantienen separado
 | `client/src/lib/database.types.ts` | Tipos principales del esquema usado por el frontend. |
 | `client/src/lib/trace-data.ts` | Lectura, match RPC, importación de Excel/CSV y mapeo de registros. |
 | `client/src/components/AuthGate.tsx` | Login y sesión Supabase Auth; modo demo sin variables. |
+| `client/src/components/ProfileAndUsers.tsx` | Menú de perfil, edición propia y administración de usuarios. |
 | `client/src/pages/Home.tsx` | Panel, captura, supervisión, documentos, reportes e historial. |
+| `supabase/functions/admin-users/index.ts` | Edge Function protegida para listar, crear y editar usuarios Auth. |
+| `supabase/profile-update.sql` | Policy RLS para actualizar el perfil propio. |
 | `.env.example` | Plantilla de variables públicas necesarias para Vite. |
 
 ## Limitaciones actuales

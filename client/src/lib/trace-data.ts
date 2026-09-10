@@ -188,3 +188,48 @@ export async function importMasterDocument(file: File, user: User, profile: Prof
 
   return { document: activated, storageWarning: Boolean(storageResult.error) };
 }
+
+export type AdminUser = Profile & {
+  email: string;
+  last_sign_in_at: string | null;
+};
+
+export type UserFormPayload = {
+  user_id?: string;
+  email: string;
+  password?: string;
+  nombre_completo: string;
+  numero_empleado: string;
+  rol: "operador" | "supervisor" | "administrador";
+  planta: string;
+  area: string;
+  activo: boolean;
+};
+
+export async function listAdminUsers() {
+  if (!supabase) throw new Error("Supabase no está configurado.");
+  const { data, error } = await supabase.functions.invoke("admin-users", { body: { action: "list" } });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return (data?.users || []) as AdminUser[];
+}
+
+export async function saveAdminUser(action: "create" | "update", payload: UserFormPayload) {
+  if (!supabase) throw new Error("Supabase no está configurado.");
+  const { data, error } = await supabase.functions.invoke("admin-users", { body: { action, ...payload } });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data as { user: { id: string; email?: string }; profile: Profile };
+}
+
+export async function updateOwnProfile(userId: string, payload: Pick<UserFormPayload, "nombre_completo" | "numero_empleado" | "planta" | "area">) {
+  if (!supabase) throw new Error("Supabase no está configurado.");
+  const { data, error } = await supabase
+    .from("perfiles_usuarios")
+    .update({ ...payload, updated_at: new Date().toISOString() })
+    .eq("id", userId)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as Profile;
+}

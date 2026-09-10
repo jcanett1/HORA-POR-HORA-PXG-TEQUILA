@@ -41,6 +41,7 @@ import type { AuthContextValue } from "@/components/AuthGate";
 import type { MasterDocument, Profile } from "@/lib/database.types";
 import { fetchTraceData, importMasterDocument, mapCaptureRow } from "@/lib/trace-data";
 import { supabase } from "@/lib/supabase";
+import { ProfileEditorModal, ProfileMenu, UsersAdmin } from "@/components/ProfileAndUsers";
 
 type View =
   | "panel"
@@ -49,6 +50,7 @@ type View =
   | "documentos"
   | "reportes"
   | "historial"
+  | "usuarios"
   | "configuracion";
 
 type MatchState = "Coincide" | "Discrepancia" | "No encontrado" | "Duplicado";
@@ -527,12 +529,17 @@ export default function Home({ user, profile, liveMode, signOut }: AuthContextVa
   const [view, setView] = useState<View>("panel");
   const [records, setRecords] = useState<RecordItem[]>(startingRecords);
   const [documents, setDocuments] = useState<MasterDocument[]>([]);
+  const [currentProfile, setCurrentProfile] = useState<Profile | null>(profile);
   const [dataLoading, setDataLoading] = useState(liveMode);
   const [clock, setClock] = useState(getTime());
   const [mobileMenu, setMobileMenu] = useState(false);
-  const operatorName = profile?.nombre_completo || user.email?.split("@")[0] || "María López";
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const operatorName = currentProfile?.nombre_completo || user.email?.split("@")[0] || "María López";
+  const isAdmin = currentProfile?.rol === "administrador";
 
   useEffect(() => { const timer = window.setInterval(() => setClock(getTime()), 30_000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => { setCurrentProfile(profile); }, [profile]);
   useEffect(() => {
     if (!liveMode || !profile) {
       setDataLoading(false);
@@ -566,17 +573,18 @@ export default function Home({ user, profile, liveMode, signOut }: AuthContextVa
     setRecords((current) => current.map((record) => record.id === id ? { ...record, review } : record));
     if (review === "Confirmado") toast.success("Material marcado como enviado / salido de producción.");
   }
-  const activeTitle = navigation.find((item) => item.id === view)?.label ?? "Configuración";
+  const activeTitle = view === "usuarios" ? "Usuarios y permisos" : navigation.find((item) => item.id === view)?.label ?? "Configuración";
 
   return <div className="min-h-screen bg-[#f4f7f8] text-slate-800"><div className="industrial-grid fixed inset-0 pointer-events-none opacity-40" />
     <aside className={`sidebar-panel fixed inset-y-0 left-0 z-40 flex w-[278px] flex-col transition-transform duration-200 lg:translate-x-0 ${mobileMenu ? "translate-x-0" : "-translate-x-full"}`}>
       <div className="border-b border-white/10 px-6 py-6"><div className="flex items-center gap-3"><div className={logoMarkClass()}><PackageCheck className="h-5 w-5" /></div><div><p className="font-display text-lg font-semibold tracking-tight text-white">TRAZA</p><p className="text-[10px] font-bold uppercase tracking-[.18em] text-cyan-200/70">Control de materiales</p></div></div></div>
       <nav className="flex-1 px-4 py-5"><p className="px-3 pb-3 text-[10px] font-bold uppercase tracking-[.18em] text-slate-400">Operación</p><div className="space-y-1">{navigation.map((item) => { const Icon = item.icon; const isActive = view === item.id; return <button key={item.id} onClick={() => { setView(item.id); setMobileMenu(false); }} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${isActive ? "bg-white/12 text-white shadow-sm" : "text-slate-300 hover:bg-white/7 hover:text-white"}`}><Icon className={`h-4.5 w-4.5 ${isActive ? "text-cyan-200" : "text-slate-400 group-hover:text-cyan-200"}`} /><span className="flex-1">{item.label}</span>{item.id === "supervision" && pendingCount > 0 ? <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-300 px-1 text-[10px] font-extrabold text-amber-950">{pendingCount}</span> : null}</button>; })}</div><p className="mt-7 px-3 pb-3 text-[10px] font-bold uppercase tracking-[.18em] text-slate-400">Sistema</p><button onClick={() => { setView("configuracion"); setMobileMenu(false); }} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${view === "configuracion" ? "bg-white/12 text-white" : "text-slate-300 hover:bg-white/7 hover:text-white"}`}><Settings className="h-4.5 w-4.5 text-slate-400 group-hover:text-cyan-200" />Configuración</button></nav>
-      <button onClick={() => void signOut()} className="m-4 rounded-2xl border border-white/10 bg-white/[.055] p-4 text-left transition hover:bg-white/[.10]"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#f3c887] to-[#d38157] text-xs font-extrabold text-[#4a2514]">{operatorName.slice(0, 2).toUpperCase()}</div><div className="min-w-0"><p className="truncate text-xs font-bold text-white">{operatorName}</p><p className="mt-0.5 text-[11px] text-slate-400">{profile?.rol || "Operador"} · Turno 1</p></div><ChevronDown className="ml-auto h-4 w-4 text-slate-400" /></div></button>
+      <ProfileMenu name={operatorName} role={currentProfile?.rol || "Operador"} isAdmin={isAdmin} open={profileMenuOpen} onToggle={() => setProfileMenuOpen((open) => !open)} onEditProfile={() => { setProfileMenuOpen(false); if (currentProfile) setProfileEditorOpen(true); else toast.info("El modo demo no tiene un perfil persistente."); }} onManageUsers={() => { setProfileMenuOpen(false); setView("usuarios"); }} onSignOut={() => { setProfileMenuOpen(false); void signOut(); }} />
     </aside>
     {mobileMenu ? <button aria-label="Cerrar menú" onClick={() => setMobileMenu(false)} className="fixed inset-0 z-30 bg-slate-950/35 lg:hidden" /> : null}
     <main className="relative min-h-screen lg:pl-[278px]"><header className="sticky top-0 z-20 flex h-[74px] items-center justify-between border-b border-slate-200/80 bg-[#f9fbfb]/85 px-4 backdrop-blur-xl sm:px-7 lg:px-9"><div className="flex items-center gap-3"><button onClick={() => setMobileMenu(true)} aria-label="Abrir menú" className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"><LayoutDashboard className="h-5 w-5" /></button><div><p className="text-xs font-bold text-slate-700 sm:text-sm">{activeTitle}</p><p className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">Planta Monterrey · Primer turno</p></div></div><div className="flex items-center gap-3"><div className="hidden text-right sm:block"><p className="text-xs font-semibold capitalize text-slate-700">{clock}</p><p className="mt-0.5 text-[10px] text-slate-400">Hora de estación</p></div><button onClick={() => toast.info("No hay notificaciones nuevas en esta demostración.")} className="relative rounded-xl border border-slate-200 bg-white p-2.5 text-slate-500 shadow-sm transition hover:border-cyan-200 hover:text-[#0e7f8d]"><Bell className="h-4 w-4" /><span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-amber-400 ring-2 ring-white" /></button></div></header>
-      <div className="mx-auto max-w-[1550px] px-4 py-7 sm:px-7 lg:px-9 lg:py-9">{dataLoading ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs font-semibold text-cyan-800"><div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-600 border-t-transparent" />Sincronizando con Supabase…</div> : null}{!liveMode ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800"><CircleAlert className="h-4 w-4" />Modo demo: agrega las variables de Supabase para usar datos reales.</div> : null}{view === "panel" && <Panel records={records} setView={setView} activeDocument={documents.find((document) => document.estatus_importacion === "activo")} />}{view === "captura" && <Capture onCapture={addRecord} user={user} profile={profile} liveMode={liveMode} operatorName={operatorName} />}{view === "supervision" && <Supervision records={records} onReview={reviewRecord} />}{view === "documentos" && <Documents documents={documents} user={user} profile={profile} liveMode={liveMode} onDocumentsChange={setDocuments} />}{view === "reportes" && <Reports records={records} />}{view === "historial" && <HistoryView records={records} />}{view === "configuracion" && <SettingsView />}</div>
+      <div className="mx-auto max-w-[1550px] px-4 py-7 sm:px-7 lg:px-9 lg:py-9">{dataLoading ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs font-semibold text-cyan-800"><div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-600 border-t-transparent" />Sincronizando con Supabase…</div> : null}{!liveMode ? <div className="mb-5 flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800"><CircleAlert className="h-4 w-4" />Modo demo: agrega las variables de Supabase para usar datos reales.</div> : null}{view === "panel" && <Panel records={records} setView={setView} activeDocument={documents.find((document) => document.estatus_importacion === "activo")} />}{view === "captura" && <Capture onCapture={addRecord} user={user} profile={currentProfile} liveMode={liveMode} operatorName={operatorName} />}{view === "supervision" && <Supervision records={records} onReview={reviewRecord} />}{view === "documentos" && <Documents documents={documents} user={user} profile={currentProfile} liveMode={liveMode} onDocumentsChange={setDocuments} />}{view === "reportes" && <Reports records={records} />}{view === "historial" && <HistoryView records={records} />}{view === "usuarios" && <UsersAdmin liveMode={liveMode && isAdmin} currentUserId={user.id} onBack={() => setView("panel")} />}{view === "configuracion" && <SettingsView />}</div>
+      {profileEditorOpen && currentProfile ? <ProfileEditorModal userId={user.id} profile={currentProfile} onClose={() => setProfileEditorOpen(false)} onSaved={(updated) => setCurrentProfile(updated)} /> : null}
       <footer className="mx-4 border-t border-slate-200/80 py-5 text-center text-[11px] text-slate-400 sm:mx-7 lg:mx-9">TRAZA · Prototipo frontend con datos simulados · Sin base de datos ni almacenamiento persistente.</footer>
     </main>
   </div>;
