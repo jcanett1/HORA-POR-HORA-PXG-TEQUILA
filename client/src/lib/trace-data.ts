@@ -183,7 +183,7 @@ export async function findExistingShRecords(sh: string) {
   const { data, error } = await supabase
     .from("registros_captura")
     .select("id, fecha_hora_captura, celda")
-    .eq("sh_normalizada", normalizedSh)
+    .eq("sh_normalizado", normalizedSh)
     .order("fecha_hora_captura", { ascending: false })
     .limit(20);
   if (error) throw new Error(`registros_captura: ${supabaseErrorMessage(error, "no fue posible revisar el SH")}`);
