@@ -41,6 +41,8 @@ import type { User } from "@supabase/supabase-js";
 import type { AuthContextValue } from "@/components/AuthGate";
 import type { MasterDocument, Profile, ProductionCell } from "@/lib/database.types";
 import { fetchTraceData, findAccessoryReferences, findExistingShRecords, importMasterDocument, mapCaptureRow, type AccessoryReference, type ReferenceRow } from "@/lib/trace-data";
+import { listJaulaStates } from "@/lib/jaula-data";
+import { getJaulaPartStatus, type JaulaStateMap } from "@/lib/jaulaStorage";
 import { supabase } from "@/lib/supabase";
 import { ProfileEditorModal, ProfileMenu, UsersAdmin } from "@/components/ProfileAndUsers";
 import StreamlitePdfView from "@/pages/StreamlitePdfView";
@@ -314,6 +316,8 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
   const [piecesPerHour, setPiecesPerHour] = useState("");
   const [accessoryRows, setAccessoryRows] = useState<Array<{ reference: AccessoryReference; code: string; quantity: string }>>([]);
   const [existingShRecords, setExistingShRecords] = useState<Array<{ id: string; fecha_hora_captura: string; celda: string | null; numero_parte_original: string }>>([]);
+  const [jaulaStates, setJaulaStates] = useState<JaulaStateMap>({});
+  const [jaulaBusy, setJaulaBusy] = useState(false);
   const [lookupBusy, setLookupBusy] = useState(false);
   const [lookupError, setLookupError] = useState("");
   const [lastCapture, setLastCapture] = useState<RecordItem | null>(null);
@@ -324,6 +328,15 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
 
   function isAccessoryRegistered(row: { reference: AccessoryReference; code: string }) {
     return registeredParts.has(registrationKey(row.reference.order, sh, row.reference.code));
+  }
+
+  function getAccessoryJaulaStatus(row: { reference: AccessoryReference; code: string }) {
+    return getJaulaPartStatus(jaulaStates, row.reference.order, sh, row.reference.code);
+  }
+
+  function isAccessoryReleased(row: { reference: AccessoryReference; code: string }) {
+    const status = getAccessoryJaulaStatus(row);
+    return status === "liberado" || status === "recogido";
   }
 
   useEffect(() => {
@@ -354,8 +367,9 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setLookupBusy(true);
-      void Promise.allSettled([findAccessoryReferences(sh, order, profile), findExistingShRecords(sh, order)])
-        .then(([accessoryResult, existingResult]) => {
+      setJaulaBusy(true);
+      void Promise.allSettled([findAccessoryReferences(sh, order, profile), findExistingShRecords(sh, order), listJaulaStates(profile.planta, profile.area)])
+        .then(([accessoryResult, existingResult, jaulaResult]) => {
           if (cancelled) return;
           const errors: string[] = [];
           if (accessoryResult.status === "fulfilled") {
@@ -367,9 +381,11 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
           }
           if (existingResult.status === "fulfilled") setExistingShRecords(existingResult.value);
           else errors.push(existingResult.reason instanceof Error ? existingResult.reason.message : "No fue posible revisar si el SH ya fue ingresado.");
+          if (jaulaResult.status === "fulfilled") setJaulaStates(jaulaResult.value);
+          else errors.push(jaulaResult.reason instanceof Error ? jaulaResult.reason.message : "No fue posible revisar si los accesorios fueron liberados por JAULA.");
           setLookupError(errors.join(" | "));
         })
-        .finally(() => { if (!cancelled) setLookupBusy(false); });
+        .finally(() => { if (!cancelled) { setLookupBusy(false); setJaulaBusy(false); } });
     }, 450);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [liveMode, profile, order, sh]);
@@ -391,6 +407,11 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
     if (!profile?.celda) { toast.error("Selecciona una celda antes de registrar materiales."); return; }
     const pendingAccessoryRows = accessoryRows.filter((row) => !isAccessoryRegistered(row));
     if (accessoryRows.length > 0 && pendingAccessoryRows.length === 0) { toast.info("Todos los accesorios de este SO y SH ya fueron registrados."); return; }
+    const blockedByJaula = pendingAccessoryRows.filter((row) => !isAccessoryReleased(row));
+    if (blockedByJaula.length > 0) {
+      toast.error(`JAULA debe liberar primero: ${blockedByJaula.map((row) => row.code).join(", ")}.`);
+      return;
+    }
     if (!quantity && pendingAccessoryRows.length === 0) { toast.error("Completa la cantidad del material."); return; }
     if (!ordersPerHour || Number(ordersPerHour) < 0 || !piecesPerHour || Number(piecesPerHour) < 0) { toast.error("Completa Orden x hora y Piezas x hora con valores válidos."); return; }
 
@@ -444,9 +465,9 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
           {lookupBusy ? <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">Consultando accesorios del documento maestro…</div> : null}
           {lookupError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">Detalle de consulta: {lookupError}</div> : null}
           {existingShRecords.length > 0 ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-bold text-amber-900">Este SH ya fue ingresado</p><p className="mt-1 text-xs leading-5 text-amber-800">Se encontraron {existingShRecords.length} registro(s) para <strong>{sh}</strong>. Puedes revisar el historial antes de registrar otro accesorio; si repites el mismo SH + accesorio, el sistema lo marcará como duplicado.</p></div> : null}
-          {accessoryRows.length > 0 ? <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-cyan-950">Accesorios que debes capturar</p><p className="mt-1 text-xs text-cyan-800">Los accesorios ya registrados aparecen bloqueados. Solo captura la cantidad de los pendientes; el botón no volverá a enviar los que ya tienen registro.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-cyan-800">{accessoryRows.length} encontrados</span></div><div className="mt-4 grid gap-3 md:grid-cols-2">{accessoryRows.map((row, index) => { const registered = isAccessoryRegistered(row); return <div key={`${row.reference.id}-${row.reference.order}`} className={`rounded-xl border p-3 ${registered ? "border-emerald-200 bg-emerald-50/75" : "border-cyan-100 bg-white"}`}><div className="mb-2 flex items-center justify-between gap-2"><span className={`text-[10px] font-bold uppercase tracking-[.1em] ${registered ? "text-emerald-700" : "text-slate-400"}`}>Accesorio {index + 1} · SO {row.reference.order}</span>{registered ? <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-emerald-700"><Check className="h-3 w-3" />Ya registrado</span> : row.reference.expectedQuantity !== null ? <span className="text-[10px] font-semibold text-slate-400">Esperado: {row.reference.expectedQuantity}</span> : <span className="text-[10px] font-semibold text-amber-700">Pendiente</span>}</div><div className="grid gap-2 sm:grid-cols-2"><input aria-label={`Código accesorio ${index + 1}`} value={row.code} onChange={(e) => updateAccessory(index, "code", e.target.value)} disabled={registered} className={`field-input font-mono text-xs disabled:cursor-not-allowed disabled:border-emerald-200 disabled:bg-emerald-100 disabled:text-emerald-800 ${registered ? "border-emerald-200 bg-emerald-100 text-emerald-800" : ""}`} placeholder="Código" /><input aria-label={`Cantidad accesorio ${index + 1}`} type="number" min="0" step="0.001" value={row.quantity} onChange={(e) => updateAccessory(index, "quantity", e.target.value)} disabled={registered} className={`field-input font-mono text-xs disabled:cursor-not-allowed disabled:border-emerald-200 disabled:bg-emerald-100 disabled:text-emerald-800 ${registered ? "border-emerald-200 bg-emerald-100 text-emerald-800" : ""}`} placeholder="Cantidad" /></div></div>; })}</div></div> : null}
+          {accessoryRows.length > 0 ? <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-cyan-950">Accesorios que debes capturar</p><p className="mt-1 text-xs text-cyan-800">Primero solicita cada accesorio en JAULA. Solo los accesorios con estado <strong>Liberado</strong> o <strong>Ya recogido</strong> permiten capturar cantidad y validar el registro.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-cyan-800">{accessoryRows.length} encontrados</span></div>{jaulaBusy ? <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500">Consultando autorización de JAULA…</div> : null}{accessoryRows.some((row) => !isAccessoryRegistered(row) && !isAccessoryReleased(row)) ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">Registro bloqueado: hay accesorios que todavía no han sido liberados por JAULA.</div> : null}<div className="mt-4 grid gap-3 md:grid-cols-2">{accessoryRows.map((row, index) => { const registered = isAccessoryRegistered(row); const jaulaStatus = getAccessoryJaulaStatus(row); const released = isAccessoryReleased(row); return <div key={`${row.reference.id}-${row.reference.order}`} className={`rounded-xl border p-3 ${registered || jaulaStatus === "recogido" ? "border-emerald-200 bg-emerald-50/75" : released ? "border-cyan-200 bg-cyan-50/75" : "border-amber-200 bg-amber-50/70"}`}><div className="mb-2 flex items-center justify-between gap-2"><span className={`text-[10px] font-bold uppercase tracking-[.1em] ${registered || released ? "text-emerald-700" : "text-amber-700"}`}>Accesorio {index + 1} · SO {row.reference.order}</span>{registered ? <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-emerald-700"><Check className="h-3 w-3" />Ya registrado</span> : released ? <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-cyan-800"><Check className="h-3 w-3" />JAULA: {jaulaStatus === "recogido" ? "Ya recogido" : "Liberado"}</span> : <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-amber-800">JAULA: Pendiente</span>}</div><div className="grid gap-2 sm:grid-cols-2"><input aria-label={`Código accesorio ${index + 1}`} value={row.code} onChange={(e) => updateAccessory(index, "code", e.target.value)} disabled={registered || !released} className={`field-input font-mono text-xs disabled:cursor-not-allowed disabled:border-amber-200 disabled:bg-amber-100 disabled:text-amber-800 ${registered || released ? "border-emerald-200 bg-white text-slate-800" : ""}`} placeholder={released ? "Código" : "Bloqueado por JAULA"} /><input aria-label={`Cantidad accesorio ${index + 1}`} type="number" min="0" step="0.001" value={row.quantity} onChange={(e) => updateAccessory(index, "quantity", e.target.value)} disabled={registered || !released} className={`field-input font-mono text-xs disabled:cursor-not-allowed disabled:border-amber-200 disabled:bg-amber-100 disabled:text-amber-800 ${registered || released ? "border-emerald-200 bg-white text-slate-800" : ""}`} placeholder={released ? "Cantidad" : "Solicita en JAULA"} /></div></div>; })}</div></div> : null}
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="ordersPerHour">Orden x hora</label><input id="ordersPerHour" type="number" min="0" step="0.001" value={ordersPerHour} onChange={(e) => setOrdersPerHour(e.target.value)} placeholder="Ej. 10" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="piecesPerHour">Piezas x hora</label><input id="piecesPerHour" type="number" min="0" step="0.001" value={piecesPerHour} onChange={(e) => setPiecesPerHour(e.target.value)} placeholder="Ej. 33" className="field-input font-mono" /></div></div>
-          <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => { setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour(""); setAccessoryRows([]); }} className="secondary-action justify-center">Limpiar</button><button type="submit" className="primary-action justify-center"><ScanLine className="h-4 w-4" />Validar y registrar</button></div>
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => { setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour(""); setAccessoryRows([]); setJaulaStates({}); }} className="secondary-action justify-center">Limpiar</button><button type="submit" disabled={jaulaBusy || (accessoryRows.length > 0 && accessoryRows.some((row) => !isAccessoryRegistered(row) && !isAccessoryReleased(row)))} className="primary-action justify-center disabled:cursor-not-allowed disabled:opacity-50"><ScanLine className="h-4 w-4" />Validar y registrar</button></div>
         </div>
       </form>
       <aside className="space-y-5"><div className="soft-card p-5 sm:p-6"><p className="eyebrow">Contexto de validación</p><div className="mt-5 space-y-4"><div className="flex gap-3"><div className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Match de material</p><p className="mt-1 text-xs text-slate-500">SH + Fulbag/accesorio</p></div></div><div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Usuario</p><p className="mt-1 text-sm font-semibold text-slate-700">{operatorName}</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Celda</p><p className="mt-1 text-sm font-semibold text-slate-700">{profile?.celda || "Sin asignar"}</p></div></div><p className="text-xs leading-5 text-slate-500">La orden se conserva para trazabilidad, pero no cambia el resultado del match.</p></div></div>{lastCapture ? <ResultCard record={lastCapture} /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center"><PackageCheck className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-600">Esperando lectura</p><p className="mx-auto mt-1 max-w-[220px] text-xs leading-5 text-slate-400">El resultado del match aparecerá aquí después de registrar el material.</p></div>}</aside>
