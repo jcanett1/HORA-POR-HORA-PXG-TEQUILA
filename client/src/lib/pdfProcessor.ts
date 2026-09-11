@@ -11,6 +11,7 @@ export type RelationRow = {
   code: string;
   description: string;
   shipment: string;
+  quantity: number;
   category: ProductCategory;
 };
 
@@ -18,6 +19,7 @@ export type AppearanceRow = {
   code: string;
   description: string;
   appearances: number;
+  shipment: string;
   category: ProductCategory;
 };
 
@@ -139,6 +141,25 @@ function addShippingCount(target: Map<string, number>, method: string) {
   if (normalized) target.set(normalized, (target.get(normalized) || 0) + 1);
 }
 
+function mergeShipmentIds(current: string, incoming: string) {
+  return Array.from(new Set([...current.split(",").map((value) => value.trim()).filter(Boolean), incoming.trim()].filter(Boolean))).sort().join(", ");
+}
+
+function aggregateRelations(rows: RelationRow[]) {
+  const aggregated = new Map<string, RelationRow>();
+  for (const row of rows) {
+    const key = `${row.order}::${row.code}`;
+    const current = aggregated.get(key);
+    if (current) {
+      current.quantity += row.quantity;
+      current.shipment = mergeShipmentIds(current.shipment, row.shipment);
+    } else {
+      aggregated.set(key, { ...row });
+    }
+  }
+  return Array.from(aggregated.values()).sort((a, b) => a.order.localeCompare(b.order) || a.code.localeCompare(b.code));
+}
+
 export async function parsePdfFile(file: File, source: PdfSource): Promise<ParsedPdf> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const loadingTask = pdfjsLib.getDocument({ data: bytes.slice() });
@@ -180,6 +201,7 @@ export async function parsePdfFile(file: File, source: PdfSource): Promise<Parse
           code,
           description: PART_DESCRIPTIONS[code as keyof typeof PART_DESCRIPTIONS],
           shipment: shipmentId,
+          quantity: partNumbers[code],
           category: classifyItem(code, PART_DESCRIPTIONS[code as keyof typeof PART_DESCRIPTIONS]),
         });
       }
@@ -210,21 +232,26 @@ function emptyCategoryRecord<T>(): Record<ProductCategory, T[]> {
 }
 
 export function buildAnalysis(build: ParsedPdf, shipment: ParsedPdf): PdfAnalysis {
-  const relations = [...build.relations, ...shipment.relations];
+  const relations = aggregateRelations([...build.relations, ...shipment.relations]);
   const relationsByCategory = emptyCategoryRecord<RelationRow>();
   for (const relation of relations) relationsByCategory[relation.category].push(relation);
 
-  const appearances = new Map<string, number>();
+  const appearances = new Map<string, { count: number; shipments: Set<string> }>();
   for (const parsed of [build, shipment]) {
     for (const page of parsed.pages) {
-      for (const [code, count] of Object.entries(page.partNumbers)) appearances.set(code, (appearances.get(code) || 0) + count);
+      for (const [code, count] of Object.entries(page.partNumbers)) {
+        const current = appearances.get(code) || { count: 0, shipments: new Set<string>() };
+        current.count += count;
+        if (page.shipmentId) current.shipments.add(page.shipmentId);
+        appearances.set(code, current);
+      }
     }
   }
   const appearancesByCategory = emptyCategoryRecord<AppearanceRow>();
-  for (const [code, appearancesCount] of Array.from(appearances.entries())) {
+  for (const [code, appearance] of Array.from(appearances.entries())) {
     const description = PART_DESCRIPTIONS[code as keyof typeof PART_DESCRIPTIONS];
     const category = classifyItem(code, description);
-    appearancesByCategory[category].push({ code, description, appearances: appearancesCount, category });
+    appearancesByCategory[category].push({ code, description, appearances: appearance.count, shipment: Array.from(appearance.shipments).sort().join(", "), category });
   }
   for (const category of CATEGORIES) {
     appearancesByCategory[category].sort((a, b) => a.code.localeCompare(b.code));
@@ -397,12 +424,12 @@ export async function generateMergedPdf(analysis: PdfAnalysis, includePickup = t
     boldFont,
     [170, 170, 188],
   );
-  drawTableReport(merged, "TABLA DE RELACIONES", "Órdenes, códigos, descripción y SH", ["Orden", "Código", "Descripción", "SH"], analysis.relations.map((row) => [row.order, row.code, row.description, row.shipment]), font, boldFont, [90, 130, 240, 68]);
+  drawTableReport(merged, "TABLA DE RELACIONES", "Órdenes, códigos, cantidad, descripción y SH", ["Orden", "Código", "Cantidad", "Descripción", "SH"], analysis.relations.map((row) => [row.order, row.code, String(row.quantity), row.description, row.shipment]), font, boldFont, [78, 112, 58, 205, 75]);
   for (const category of CATEGORIES) {
-    drawTableReport(merged, `RESUMEN DE APARICIONES: ${category.toUpperCase()}`, `${analysis.appearancesByCategory[category].length} códigos reconocidos`, ["Código", "Descripción", "Apariciones"], analysis.appearancesByCategory[category].map((row) => [row.code, row.description, String(row.appearances)]), font, boldFont, [145, 315, 68]);
+    drawTableReport(merged, `RESUMEN DE APARICIONES: ${category.toUpperCase()}`, `${analysis.appearancesByCategory[category].length} códigos reconocidos`, ["Código", "Descripción", "Apariciones", "SH"], analysis.appearancesByCategory[category].map((row) => [row.code, row.description, String(row.appearances), row.shipment || "—"]), font, boldFont, [120, 225, 70, 113]);
   }
   for (const category of ["Pelotas", "Gorras", "Guantes", "Accesorios"] as const) {
-    drawTableReport(merged, `LISTADO DE ${category.toUpperCase()}`, "Relaciones únicas encontradas por categoría", ["Orden", "Código", "Descripción", "SH"], analysis.relationsByCategory[category].map((row) => [row.order, row.code, row.description, row.shipment]), font, boldFont, [90, 130, 240, 68]);
+    drawTableReport(merged, `LISTADO DE ${category.toUpperCase()}`, "Relaciones únicas encontradas por categoría", ["Orden", "Código", "Cantidad", "Descripción", "SH"], analysis.relationsByCategory[category].map((row) => [row.order, row.code, String(row.quantity), row.description, row.shipment]), font, boldFont, [78, 112, 58, 205, 75]);
   }
 
   for (const input of [analysis.build, analysis.shipment]) {
