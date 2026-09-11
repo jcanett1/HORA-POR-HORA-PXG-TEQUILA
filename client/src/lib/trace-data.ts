@@ -144,18 +144,16 @@ export async function findAccessoryReferences(sh: string, order: string, profile
     .select("id")
     .eq("planta", profile.planta)
     .eq("area", profile.area)
-    .eq("estatus_importacion", "activo")
-    .order("fecha_activacion", { ascending: false, nullsFirst: false })
-    .order("fecha_carga", { ascending: false })
-    .limit(1);
+    .in("estatus_importacion", ["activo", "validado", "archivado"])
+    .order("fecha_carga", { ascending: false });
   if (documentError) throw new Error(`documentos_maestros: ${supabaseErrorMessage(documentError, "no fue posible leer el documento activo")}`);
-  const documentId = documents?.[0]?.id;
-  if (!documentId) return [] as AccessoryReference[];
+  const documentIds = (documents || []).map((document) => document.id);
+  if (!documentIds.length) return [] as AccessoryReference[];
 
   const { data, error } = await supabase
     .from("datos_referencia")
     .select("id, numero_parte_original, cantidad_esperada, numero_fila_origen")
-    .eq("documento_id", documentId)
+    .in("documento_id", documentIds)
     .eq("orden_normalizado", normalizedOrder)
     .eq("sh_normalizado", normalizedSh)
     .eq("activo", true)
@@ -291,7 +289,14 @@ export async function importMasterDocument(file: File, user: User, profile: Prof
   const activation = await supabase.rpc("activar_documento", { p_documento_id: document.id });
   if (!activation.error && activation.data) activated = activation.data as MasterDocument;
 
-  return { document: activated, storageWarning: Boolean(storageResult.error) };
+  const { data: importedReferences, error: importedReferencesError } = await supabase
+    .from("datos_referencia")
+    .select("id, documento_id, numero_fila_origen, orden_original, numero_parte_original, sh_original, activo")
+    .eq("documento_id", document.id)
+    .order("numero_fila_origen", { ascending: true });
+  if (importedReferencesError) throw importedReferencesError;
+
+  return { document: activated, references: (importedReferences || []) as ReferenceRow[], storageWarning: Boolean(storageResult.error) };
 }
 
 export type AdminUser = Profile & {
