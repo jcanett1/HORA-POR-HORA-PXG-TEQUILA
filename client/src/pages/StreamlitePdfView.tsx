@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import {
   buildAnalysis,
   CATEGORIES,
@@ -60,6 +61,19 @@ function copyBytes(bytes: Uint8Array): ArrayBuffer {
 
 function fileFromBytes(bytes: ArrayBuffer | null, name: string | null) {
   return bytes ? new File([bytes], name || "documento.pdf", { type: "application/pdf" }) : null;
+}
+
+function safeFileName(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").toLowerCase();
+}
+
+function downloadTableAsExcel(fileName: string, sheetName: string, rows: Record<string, string | number>[]) {
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  worksheet["!cols"] = Object.keys(rows[0] || {}).map((key) => ({ wch: Math.min(42, Math.max(12, key.length + 4)) }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName.slice(0, 31));
+  XLSX.writeFile(workbook, `${safeFileName(fileName)}.xlsx`);
+  toast.success(`Excel descargado: ${fileName}.xlsx`);
 }
 
 function UploadCard({
@@ -114,7 +128,7 @@ function RelationTable({ rows, title, description }: { rows: RelationRow[]; titl
     return rows.filter((row) => [row.order, row.code, row.description, row.shipment, String(row.quantity)].some((value) => value.toLowerCase().includes(normalized)));
   }, [query, rows]);
   return <div className="soft-card overflow-hidden">
-    <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-6"><div><p className="text-sm font-bold text-slate-800">{title}</p><p className="mt-1 text-xs text-slate-500">{description} · {formatNumber(rows.length)} filas agrupadas por orden y código</p></div><div className="flex items-center gap-2"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar tabla" className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none transition focus:border-cyan-500 focus:ring-3 focus:ring-cyan-100 sm:w-56" /><TableProperties className="hidden h-4 w-4 text-cyan-700 sm:block" /></div></div>
+    <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-6"><div><p className="text-sm font-bold text-slate-800">{title}</p><p className="mt-1 text-xs text-slate-500">{description} · {formatNumber(rows.length)} filas agrupadas por orden y código</p></div><div className="flex items-center gap-2"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar tabla" className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none transition focus:border-cyan-500 focus:ring-3 focus:ring-cyan-100 sm:w-56" /><button type="button" onClick={() => downloadTableAsExcel("relaciones_ordenes_codigos_sh", "Relaciones", rows.map((row) => ({ Orden: row.order, Código: row.code, Cantidad: row.quantity, Descripción: row.description, SH: row.shipment || "" })))} title="Descargar tabla en Excel" aria-label="Descargar tabla de relaciones en Excel" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-100"><Download className="h-4 w-4" /></button><TableProperties className="hidden h-4 w-4 text-cyan-700 sm:block" /></div></div>
     {filtered.length ? <div className="max-h-[450px] overflow-auto"><table className="w-full min-w-[900px] text-left"><thead className="sticky top-0 z-10 bg-slate-50/95 text-[10px] font-bold uppercase tracking-[.12em] text-slate-500 backdrop-blur"><tr><th className="px-5 py-3">Orden</th><th className="px-5 py-3">Código</th><th className="px-5 py-3">Cantidad</th><th className="px-5 py-3">Descripción</th><th className="px-5 py-3">SH</th></tr></thead><tbody className="divide-y divide-slate-100">{filtered.slice(0, 500).map((row, index) => <tr key={`${row.order}-${row.code}-${row.shipment}-${index}`} className="transition hover:bg-cyan-50/35"><td className="whitespace-nowrap px-5 py-3 text-xs font-semibold text-slate-700">{row.order}</td><td className="whitespace-nowrap px-5 py-3 font-mono text-[11px] text-cyan-800">{row.code}</td><td className="whitespace-nowrap px-5 py-3 text-sm font-bold text-slate-800">{formatNumber(row.quantity)}</td><td className="px-5 py-3 text-xs text-slate-600">{row.description}</td><td className="px-5 py-3 font-mono text-[11px] text-slate-600">{row.shipment || "—"}</td></tr>)}</tbody></table></div> : <div className="p-5"><EmptyState message="No hay filas que coincidan con la búsqueda." /></div>}
     {filtered.length > 500 ? <p className="border-t border-slate-100 px-5 py-3 text-[11px] text-slate-500">Mostrando las primeras 500 filas; usa la búsqueda para encontrar una relación específica.</p> : null}
   </div>;
@@ -124,7 +138,7 @@ function AppearanceTable({ rows, category }: { rows: AppearanceRow[]; category: 
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => { const normalized = query.trim().toLowerCase(); return normalized ? rows.filter((row) => `${row.code} ${row.description} ${row.shipment}`.toLowerCase().includes(normalized)) : rows; }, [query, rows]);
   return <div className="soft-card overflow-hidden">
-    <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-6"><div><p className="text-sm font-bold text-slate-800">Resumen de apariciones · {category}</p><p className="mt-1 text-xs text-slate-500">Código, descripción, cantidad total y todos los SH relacionados.</p></div><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar código, descripción o SH" className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none transition focus:border-cyan-500 focus:ring-3 focus:ring-cyan-100 sm:w-72" /></div>
+    <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-6"><div><p className="text-sm font-bold text-slate-800">Resumen de apariciones · {category}</p><p className="mt-1 text-xs text-slate-500">Código, descripción, cantidad total y todos los SH relacionados.</p></div><div className="flex items-center gap-2"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar código, descripción o SH" className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none transition focus:border-cyan-500 focus:ring-3 focus:ring-cyan-100 sm:w-72" /><button type="button" onClick={() => downloadTableAsExcel(`resumen_${category}`, category, rows.map((row) => ({ Código: row.code, Descripción: row.description, Cantidad: row.appearances, SH: row.shipment || "" })))} title={`Descargar resumen de ${category} en Excel`} aria-label={`Descargar resumen de ${category} en Excel`} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-100"><Download className="h-4 w-4" /></button></div></div>
     {filtered.length ? <div className="max-h-[390px] overflow-auto"><table className="w-full min-w-[820px] text-left"><thead className="sticky top-0 z-10 bg-slate-50/95 text-[10px] font-bold uppercase tracking-[.12em] text-slate-500 backdrop-blur"><tr><th className="px-5 py-3">Código</th><th className="px-5 py-3">Descripción</th><th className="px-5 py-3">Cantidad</th><th className="px-5 py-3">SH</th></tr></thead><tbody className="divide-y divide-slate-100">{filtered.map((row) => <tr key={row.code} className="hover:bg-cyan-50/35"><td className="whitespace-nowrap px-5 py-3 font-mono text-[11px] text-cyan-800">{row.code}</td><td className="px-5 py-3 text-xs text-slate-600">{row.description}</td><td className="whitespace-nowrap px-5 py-3 text-sm font-bold text-slate-800">{formatNumber(row.appearances)}</td><td className="px-5 py-3 font-mono text-[11px] text-slate-600">{row.shipment || "—"}</td></tr>)}</tbody></table></div> : <div className="p-5"><EmptyState message="No se encontraron apariciones para esta categoría." /></div>}
   </div>;
 }
