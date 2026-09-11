@@ -34,6 +34,7 @@ export type ReferenceRow = {
 export type AccessoryReference = {
   id: string;
   code: string;
+  order: string;
   expectedQuantity: number | null;
   sourceRow: number | null;
 };
@@ -137,7 +138,7 @@ export async function findAccessoryReferences(sh: string, order: string, profile
   if (!supabase) throw new Error("Supabase no está configurado.");
   const normalizedSh = normalizeValue(sh);
   const normalizedOrder = normalizeValue(order);
-  if (!normalizedSh || !normalizedOrder) return [] as AccessoryReference[];
+  if (!normalizedSh) return [] as AccessoryReference[];
 
   const { data: documents, error: documentError } = await supabase
     .from("documentos_maestros")
@@ -146,31 +147,34 @@ export async function findAccessoryReferences(sh: string, order: string, profile
     .eq("area", profile.area)
     .in("estatus_importacion", ["activo", "validado", "archivado"])
     .order("fecha_carga", { ascending: false });
-  if (documentError) throw new Error(`documentos_maestros: ${supabaseErrorMessage(documentError, "no fue posible leer el documento activo")}`);
+  if (documentError) throw new Error(`documentos_maestros: ${supabaseErrorMessage(documentError, "no fue posible leer los documentos maestros")}`);
   const documentIds = (documents || []).map((document) => document.id);
   if (!documentIds.length) return [] as AccessoryReference[];
 
   const { data, error } = await supabase
     .from("datos_referencia")
-    .select("id, numero_parte_original, cantidad_esperada, numero_fila_origen")
+    .select("id, orden_original, numero_parte_original, cantidad_esperada, numero_fila_origen")
     .in("documento_id", documentIds)
-    .eq("orden_normalizado", normalizedOrder)
     .eq("sh_normalizado", normalizedSh)
     .eq("activo", true)
     .order("numero_fila_origen", { ascending: true });
   if (error) throw new Error(`datos_referencia: ${supabaseErrorMessage(error, "no fue posible leer las referencias")}`);
 
   const seen = new Set<string>();
-  return ((data || []) as Array<{ id: string; numero_parte_original: string; cantidad_esperada: number | null; numero_fila_origen: number | null }>)
+  return ((data || []) as Array<{ id: string; orden_original: string; numero_parte_original: string; cantidad_esperada: number | null; numero_fila_origen: number | null }>)
     .filter((row) => {
-      const key = normalizeValue(row.numero_parte_original);
-      if (!key || seen.has(key)) return false;
+      if (normalizedOrder && normalizeValue(row.orden_original) !== normalizedOrder) return false;
+      const normalizedPart = normalizeValue(row.numero_parte_original);
+      if (!normalizedPart) return false;
+      const key = `${normalizeValue(row.orden_original)}|||${normalizedPart}`;
+      if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
     .map((row) => ({
       id: row.id,
       code: row.numero_parte_original,
+      order: row.orden_original,
       expectedQuantity: row.cantidad_esperada === null ? null : Number(row.cantidad_esperada),
       sourceRow: row.numero_fila_origen,
     }));
