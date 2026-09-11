@@ -1,12 +1,15 @@
 export type JaulaAccessoryStatus = "pendiente" | "liberado" | "recogido";
 
 export type JaulaPartState = {
+  id?: string;
   status: JaulaAccessoryStatus;
   updatedAt: number;
+  celda?: string | null;
 };
 
 export type JaulaGroupState = {
   pedidoAt: number | null;
+  celda: string | null;
   parts: Record<string, JaulaPartState>;
   updatedAt: number;
 };
@@ -40,7 +43,7 @@ export function saveJaulaStates(states: JaulaStateMap) {
 }
 
 export function getJaulaGroupState(states: JaulaStateMap, order: string, sh: string): JaulaGroupState {
-  return states[jaulaGroupKey(order, sh)] || { pedidoAt: null, parts: {}, updatedAt: 0 };
+  return states[jaulaGroupKey(order, sh)] || { pedidoAt: null, celda: null, parts: {}, updatedAt: 0 };
 }
 
 export function getJaulaPartStatus(states: JaulaStateMap, order: string, sh: string, part: string): JaulaAccessoryStatus {
