@@ -316,6 +316,7 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
   const [lastCapture, setLastCapture] = useState<RecordItem | null>(null);
   const [cellSaving, setCellSaving] = useState(false);
   const [currentHour] = useState(() => new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }));
+  const previousSh = useRef("");
   const registeredParts = useMemo(() => new Set([...records.map((record) => registrationKey(record.order, record.sh, record.part)), ...existingShRecords.map((record) => registrationKey(order, sh, record.numero_parte_original))]), [records, existingShRecords, order, sh]);
 
   function isAccessoryRegistered(row: { reference: AccessoryReference; code: string }) {
@@ -323,7 +324,25 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
   }
 
   useEffect(() => {
-    if (!liveMode || !profile || !sh.trim()) {
+    const normalizedSh = sh.trim().toUpperCase();
+    if (!normalizedSh) {
+      previousSh.current = "";
+      setOrder("");
+      setAccessoryRows([]);
+      setExistingShRecords([]);
+      setLookupError("");
+      return;
+    }
+    if (normalizedSh !== previousSh.current) {
+      previousSh.current = normalizedSh;
+      if (order) {
+        setOrder("");
+        setAccessoryRows([]);
+        setExistingShRecords([]);
+        return;
+      }
+    }
+    if (!liveMode || !profile) {
       setAccessoryRows([]);
       setExistingShRecords([]);
       setLookupError("");
@@ -337,6 +356,8 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
           if (cancelled) return;
           const errors: string[] = [];
           if (accessoryResult.status === "fulfilled") {
+            const linkedOrders = Array.from(new Set(accessoryResult.value.map((reference) => reference.order).filter(Boolean)));
+            if (!order.trim() && linkedOrders.length === 1) setOrder(linkedOrders[0]);
             setAccessoryRows(accessoryResult.value.length ? accessoryResult.value.map((reference) => ({ reference, code: reference.code, quantity: reference.expectedQuantity === null ? "" : String(reference.expectedQuantity) })) : []);
           } else {
             errors.push(accessoryResult.reason instanceof Error ? accessoryResult.reason.message : "No fue posible consultar los accesorios del SH.");
@@ -416,7 +437,7 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="hour">Hora registrada</label><input id="hour" value={currentHour} readOnly className="field-input bg-slate-50 font-mono" /></div><div><label className="field-label">Celda de trabajo</label><div className="flex h-[42px] items-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-bold text-slate-700">{profile?.celda || "Sin asignar"}</div></div></div>
           {!profile?.celda ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-bold text-amber-900">Selecciona tu celda de trabajo</p><p className="mt-1 text-xs leading-5 text-amber-800">Esta selección se guarda una sola vez. Después solo un administrador podrá cambiarla.</p><div className="mt-3 grid grid-cols-2 gap-2">{(["CELDA 16", "CELDA 15", "CELDA 11", "CELDA 10"] as ProductionCell[]).map((cell) => <button key={cell} type="button" disabled={cellSaving} onClick={() => void selectCell(cell)} className="rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 transition hover:border-amber-500 hover:bg-amber-100">{cell}</button>)}</div></div> : <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">Celda asignada por sistema: <strong>{profile.celda}</strong>. Solo un administrador puede cambiarla.</div>}
           <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="sh">SH</label><input id="sh" value={sh} onChange={(e) => setSh(e.target.value)} placeholder="Ej. SH2830416" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="quantity">Cantidad total / cantidad del accesorio</label><input id="quantity" type="number" min="0" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder={accessoryRows.length > 0 ? "Captúrala en cada accesorio" : "Ej. 6"} disabled={accessoryRows.length > 0} className="field-input font-mono disabled:bg-slate-50" /></div></div>
-          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="order">Orden de producción · opcional para buscar</label><input id="order" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="Ej. OP-240981" autoFocus className="field-input font-mono" /><p className="mt-1 text-[11px] text-slate-500">Puedes escribir primero el SH; después confirma o completa la Orden.</p></div>{accessoryRows.length === 0 ? <div><label className="field-label" htmlFor="part">Fulbag o accesorio · código / número de parte</label><input id="part" value={part} onChange={(e) => setPart(e.target.value)} placeholder="Ej. PGA o PN-RA-4102" className="field-input font-mono" /></div> : <div className="flex items-end rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-800">Se encontraron {accessoryRows.length} accesorios para este SH{order ? " + orden" : ""}. Selecciona la Orden antes de registrar.</div>}</div>
+          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="order">Orden de producción · se llena con el SH</label><input id="order" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="Se asigna automáticamente" autoFocus className="field-input font-mono" /><p className="mt-1 text-[11px] text-slate-500">Si el SH pertenece a una sola Orden, se completa automáticamente. Si pertenece a varias, selecciona la correcta.</p></div>{accessoryRows.length === 0 ? <div><label className="field-label" htmlFor="part">Fulbag o accesorio · código / número de parte</label><input id="part" value={part} onChange={(e) => setPart(e.target.value)} placeholder="Ej. PGA o PN-RA-4102" className="field-input font-mono" /></div> : <div className="flex items-end rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-800">Se encontraron {accessoryRows.length} accesorios para este SH{order ? " + orden" : ""}. {order ? "Orden ligada cargada automáticamente." : "Selecciona la Orden antes de registrar."}</div>}</div>
           {lookupBusy ? <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">Consultando accesorios del documento maestro…</div> : null}
           {lookupError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">Detalle de consulta: {lookupError}</div> : null}
           {existingShRecords.length > 0 ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-bold text-amber-900">Este SH ya fue ingresado</p><p className="mt-1 text-xs leading-5 text-amber-800">Se encontraron {existingShRecords.length} registro(s) para <strong>{sh}</strong>. Puedes revisar el historial antes de registrar otro accesorio; si repites el mismo SH + accesorio, el sistema lo marcará como duplicado.</p></div> : null}
