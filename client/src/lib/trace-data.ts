@@ -184,16 +184,16 @@ export async function findExistingShRecords(sh: string, order: string) {
   if (!supabase) throw new Error("Supabase no está configurado.");
   const normalizedSh = normalizeValue(sh);
   const normalizedOrder = normalizeValue(order);
-  if (!normalizedSh || !normalizedOrder) return [] as Array<{ id: string; fecha_hora_captura: string; celda: string | null }>;
+  if (!normalizedSh || !normalizedOrder) return [] as Array<{ id: string; fecha_hora_captura: string; celda: string | null; numero_parte_original: string }>;
   const { data, error } = await supabase
     .from("registros_captura")
-    .select("id, fecha_hora_captura, celda")
+    .select("id, fecha_hora_captura, celda, numero_parte_original")
     .eq("orden_normalizada", normalizedOrder)
     .eq("sh_normalizado", normalizedSh)
     .order("fecha_hora_captura", { ascending: false })
     .limit(20);
   if (error) throw new Error(`registros_captura: ${supabaseErrorMessage(error, "no fue posible revisar el SH")}`);
-  return (data || []) as Array<{ id: string; fecha_hora_captura: string; celda: string | null }>;
+  return (data || []) as Array<{ id: string; fecha_hora_captura: string; celda: string | null; numero_parte_original: string }>;
 }
 
 function findColumn(headers: string[], candidates: string[]) {

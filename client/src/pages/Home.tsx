@@ -310,13 +310,13 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
   const [ordersPerHour, setOrdersPerHour] = useState("");
   const [piecesPerHour, setPiecesPerHour] = useState("");
   const [accessoryRows, setAccessoryRows] = useState<Array<{ reference: AccessoryReference; code: string; quantity: string }>>([]);
-  const [existingShRecords, setExistingShRecords] = useState<Array<{ id: string; fecha_hora_captura: string; celda: string | null }>>([]);
+  const [existingShRecords, setExistingShRecords] = useState<Array<{ id: string; fecha_hora_captura: string; celda: string | null; numero_parte_original: string }>>([]);
   const [lookupBusy, setLookupBusy] = useState(false);
   const [lookupError, setLookupError] = useState("");
   const [lastCapture, setLastCapture] = useState<RecordItem | null>(null);
   const [cellSaving, setCellSaving] = useState(false);
   const [currentHour] = useState(() => new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }));
-  const registeredParts = useMemo(() => new Set(records.map((record) => registrationKey(record.order, record.sh, record.part))), [records]);
+  const registeredParts = useMemo(() => new Set([...records.map((record) => registrationKey(record.order, record.sh, record.part)), ...existingShRecords.map((record) => registrationKey(order, sh, record.numero_parte_original))]), [records, existingShRecords, order, sh]);
 
   function isAccessoryRegistered(row: { reference: AccessoryReference; code: string }) {
     return registeredParts.has(registrationKey(row.reference.order, sh, row.reference.code));
