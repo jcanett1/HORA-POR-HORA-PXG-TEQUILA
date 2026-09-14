@@ -28,6 +28,18 @@ alter table public.registros_captura
   add column if not exists piezas_x_hora numeric(14,3) not null default 0;
 
 alter table public.registros_captura
+  drop constraint if exists registros_captura_valores_check;
+
+alter table public.registros_captura
+  add constraint registros_captura_valores_check
+  check (
+    length(trim(orden_original)) > 0 and
+    length(trim(sh_original)) > 0 and
+    length(trim(orden_normalizada)) > 0 and
+    length(trim(sh_normalizado)) > 0
+  );
+
+alter table public.registros_captura
   drop constraint if exists registros_captura_hora_valores_check;
 
 alter table public.registros_captura
@@ -169,12 +181,16 @@ begin
     raise exception 'Tu usuario no tiene una celda asignada. Solicita al administrador asignar una celda.';
   end if;
 
-  if v_orden = '' or v_parte = '' or v_sh = '' then
-    raise exception 'Orden, número de parte y SH son obligatorios.';
+  if v_orden = '' or v_sh = '' then
+    raise exception 'Orden y SH son obligatorios.';
   end if;
 
   if p_cantidad < 0 or p_orden_x_hora < 0 or p_piezas_x_hora < 0 then
     raise exception 'Cantidad, Orden x hora y Piezas x hora no pueden ser negativos.';
+  end if;
+
+  if v_parte = '' and p_cantidad <> 0 then
+    raise exception 'Un registro sin accesorio debe tener cantidad 0.';
   end if;
 
   if p_idempotency_key is not null then
@@ -196,7 +212,10 @@ begin
    order by d.fecha_activacion desc nulls last, d.fecha_carga desc
    limit 1;
 
-  if v_documento_id is null then
+  if v_parte = '' then
+    v_resultado := 'no_encontrado';
+    v_motivo := 'otro';
+  elsif v_documento_id is null then
     v_resultado := 'no_encontrado';
     v_motivo := 'sin_documento_activo';
   else
@@ -246,6 +265,7 @@ begin
        and r.numero_parte_normalizada = v_parte
        and r.sh_normalizado = v_sh
        and r.estatus_supervisor <> 'cancelado'
+       and v_parte <> ''
   ) then
     v_resultado := 'duplicado';
     v_motivo := 'registro_duplicado';

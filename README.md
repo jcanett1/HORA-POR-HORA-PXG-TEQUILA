@@ -12,7 +12,7 @@ Desde el botón del perfil, el usuario puede editar sus datos propios. Un admini
 
 La carga del archivo requiere que el usuario tenga rol `supervisor` o `administrador`. El archivo original se intenta guardar en el bucket privado `documentos-maestros`; si el bucket todavía no existe, la importación de filas puede continuar, pero se mostrará una advertencia sobre Storage.
 
-La captura operativa utiliza el formato **Registro hora por hora**. Cada registro guarda SH, cantidad, hora del servidor y la celda asignada al usuario. La pestaña **Reportes** agrupa automáticamente las capturas por fecha, hora y celda para calcular órdenes distintas y piezas capturadas; mientras está abierta, sincroniza nuevos registros periódicamente. Las celdas válidas son `CELDA 16`, `CELDA 15`, `CELDA 11` y `CELDA 10`.
+La captura operativa utiliza el formato **Registro hora por hora**. Cada registro guarda SH, orden, cantidad, hora del servidor y la celda asignada al usuario. Si la celda no lleva accesorio, se puede dejar vacío el número de parte y capturar cantidad `0`; el registro se conserva como `no_encontrado`, sin bloquearse por falta de match. La pestaña **Reportes** agrupa automáticamente las capturas por fecha, hora y celda para calcular órdenes distintas y piezas capturadas; mientras está abierta, sincroniza nuevos registros periódicamente. Las celdas válidas son `CELDA 16`, `CELDA 15`, `CELDA 11` y `CELDA 10`.
 
 ## Requisitos en Supabase
 
@@ -70,7 +70,9 @@ Para que la orden se conserve únicamente como trazabilidad y el resultado del m
 supabase/match-by-sh-migration.sql
 ```
 
-La migración marca como duplicado el mismo `SH + número de parte` repetido el mismo día, pero permite registrar los demás accesorios del mismo SH. En el frontend, al ingresar un SH existente se muestra una advertencia; la advertencia no bloquea el registro de otro accesorio válido.
+La migración marca como duplicado el mismo `SH + número de parte` repetido el mismo día, pero permite registrar los demás accesorios del mismo SH. Los registros sin accesorio no se consideran duplicados y pueden capturarse nuevamente en otra hora. En el frontend, al ingresar un SH existente se muestra una advertencia; la advertencia no bloquea el registro de otro accesorio válido.
+
+Si ya habías ejecutado `supabase/match-by-sh-migration.sql`, vuelve a ejecutar la versión actualizada una sola vez en el SQL Editor de Supabase para permitir que `numero_parte_original` quede vacío en estos registros generales. No necesitas modificar filas existentes ni agregar datos manualmente.
 
 ## Variables locales
 

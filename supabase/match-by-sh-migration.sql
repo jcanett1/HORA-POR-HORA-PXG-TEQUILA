@@ -4,6 +4,20 @@
 
 begin;
 
+-- Permite guardar un registro horario general con número de parte vacío.
+-- Orden y SH siguen siendo obligatorios; el resultado será no_encontrado.
+alter table public.registros_captura
+  drop constraint if exists registros_captura_valores_check;
+
+alter table public.registros_captura
+  add constraint registros_captura_valores_check
+  check (
+    length(trim(orden_original)) > 0 and
+    length(trim(sh_original)) > 0 and
+    length(trim(orden_normalizada)) > 0 and
+    length(trim(sh_normalizado)) > 0
+  );
+
 drop function if exists public.registrar_captura(text, text, text, text, text, uuid, text, text, numeric, numeric, numeric);
 
 create or replace function public.registrar_captura(
@@ -55,12 +69,16 @@ begin
     raise exception 'Tu usuario no tiene una celda asignada. Solicita al administrador asignar una celda.';
   end if;
 
-  if v_orden = '' or v_parte = '' or v_sh = '' then
-    raise exception 'Orden, número de parte y SH son obligatorios.';
+  if v_orden = '' or v_sh = '' then
+    raise exception 'Orden y SH son obligatorios.';
   end if;
 
   if p_cantidad < 0 or p_orden_x_hora < 0 or p_piezas_x_hora < 0 then
     raise exception 'Cantidad, Orden x hora y Piezas x hora no pueden ser negativos.';
+  end if;
+
+  if v_parte = '' and p_cantidad <> 0 then
+    raise exception 'Un registro sin accesorio debe tener cantidad 0.';
   end if;
 
   if p_idempotency_key is not null then
@@ -82,7 +100,10 @@ begin
    order by d.fecha_activacion desc nulls last, d.fecha_carga desc
    limit 1;
 
-  if v_documento_id is null then
+  if v_parte = '' then
+    v_resultado := 'no_encontrado';
+    v_motivo := 'otro';
+  elsif v_documento_id is null then
     v_resultado := 'no_encontrado';
     v_motivo := 'sin_documento_activo';
   else
@@ -130,6 +151,7 @@ begin
        and r.fecha_hora_captura >= date_trunc('day', now())
        and r.sh_normalizado = v_sh
        and r.numero_parte_normalizada = v_parte
+       and v_parte <> ''
        and r.estatus_supervisor <> 'cancelado'
   ) then
     v_resultado := 'duplicado';
