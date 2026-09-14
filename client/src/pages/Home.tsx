@@ -65,14 +65,13 @@ type ReviewState = "Pendiente" | "Confirmado" | "Rechazado" | "Cancelado";
 
 type RecordItem = {
   id: string;
+  capturedAt: string;
   time: string;
   date: string;
   order: string;
   part: string;
   sh: string;
   quantity: number;
-  ordersPerHour: number;
-  piecesPerHour: number;
   cell: string | null;
   operator: string;
   match: MatchState;
@@ -116,13 +115,34 @@ function registrationKey(order: string, sh: string, part: string) {
 function buildHourlyData(records: RecordItem[]) {
   return Array.from({ length: 12 }, (_, index) => {
     const hour = index + 6;
-    const hourRecords = records.filter((record) => Number(record.time.split(":")[0]) === hour);
+    const hourRecords = records.filter((record) => new Date(record.capturedAt).getHours() === hour);
+    const orders = new Set(hourRecords.map((record) => `${record.cell || "Sin celda"}|||${record.order}`));
     return {
       hour: `${String(hour).padStart(2, "0")}:00`,
       registros: hourRecords.length,
       coincide: hourRecords.filter((record) => record.match === "Coincide").length,
+      ordenes: orders.size,
+      piezas: hourRecords.reduce((sum, record) => sum + record.quantity, 0),
     };
   });
+}
+
+function isRecordInRange(record: RecordItem, range: string) {
+  const capturedAt = new Date(record.capturedAt);
+  const now = new Date();
+  if (range === "Hoy") {
+    return capturedAt.toDateString() === now.toDateString();
+  }
+  if (range === "Esta semana") {
+    const startOfWeek = new Date(now);
+    const day = startOfWeek.getDay();
+    startOfWeek.setDate(startOfWeek.getDate() - (day === 0 ? 6 : day - 1));
+    startOfWeek.setHours(0, 0, 0, 0);
+    return capturedAt >= startOfWeek;
+  }
+  const isToday = capturedAt.toDateString() === now.toDateString();
+  const hour = capturedAt.getHours();
+  return isToday && hour >= 6 && hour < 18;
 }
 
 
@@ -312,8 +332,6 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
   const [part, setPart] = useState("");
   const [sh, setSh] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [ordersPerHour, setOrdersPerHour] = useState("");
-  const [piecesPerHour, setPiecesPerHour] = useState("");
   const [accessoryRows, setAccessoryRows] = useState<Array<{ reference: AccessoryReference; code: string; quantity: string }>>([]);
   const [existingShRecords, setExistingShRecords] = useState<Array<{ id: string; fecha_hora_captura: string; celda: string | null; numero_parte_original: string }>>([]);
   const [jaulaStates, setJaulaStates] = useState<JaulaStateMap>({});
@@ -413,8 +431,6 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
       return;
     }
     if (!quantity && pendingAccessoryRows.length === 0) { toast.error("Completa la cantidad del material."); return; }
-    if (!ordersPerHour || Number(ordersPerHour) < 0 || !piecesPerHour || Number(piecesPerHour) < 0) { toast.error("Completa Orden x hora y Piezas x hora con valores válidos."); return; }
-
     const items = pendingAccessoryRows.length > 0
       ? pendingAccessoryRows.map((row) => ({ code: row.code.trim(), quantity: row.quantity }))
       : [{ code: part.trim(), quantity }];
@@ -432,8 +448,6 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
         p_observaciones: accessoryRows.length > 0 ? `Accesorio del SH ${sh}` : null,
         p_idempotency_key: crypto.randomUUID(),
         p_cantidad: Number(item.quantity),
-        p_orden_x_hora: Number(ordersPerHour),
-        p_piezas_x_hora: Number(piecesPerHour),
       });
       if (error) { toast.error(`No se pudo registrar ${item.code}: ${error.message}`); return; }
       const row = Array.isArray(data) ? data[0] : data;
@@ -444,7 +458,7 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
     }
     const last = created[created.length - 1];
     if (last) setLastCapture(last);
-    setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour(""); setAccessoryRows([]);
+    setOrder(""); setPart(""); setSh(""); setQuantity(""); setAccessoryRows([]);
     toast.success(created.length > 1 ? `${created.length} accesorios registrados; match guardado por separado.` : last?.match === "Coincide" ? "Match correcto registrado" : "Registro hora por hora guardado para revisión");
   }
 
@@ -453,7 +467,7 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
   }
 
   return <div className="space-y-7">
-    <SectionHeader eyebrow="Bitácora operativa" title="Registro hora por hora" description="Escribe el SH para consultar automáticamente los accesorios que lleva. Después confirma la Orden, cantidades e indicadores de producción para registrar cada material." />
+    <SectionHeader eyebrow="Bitácora operativa" title="Registro hora por hora" description="Escribe el SH para consultar automáticamente los accesorios que lleva. Después confirma la Orden y la cantidad; los reportes calcularán automáticamente la producción por hora y celda." />
     <div className="grid gap-5 xl:grid-cols-[1.4fr_.8fr]">
       <form onSubmit={submitCapture} className="soft-card overflow-hidden">
         <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-7"><div className="flex items-center gap-3"><div className="rounded-xl bg-[#0e7f8d] p-2 text-white"><Clock3 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Captura de producción</p><p className="mt-0.5 text-xs text-slate-500">La consulta inicia con el SH y puede mostrar accesorios de uno o varios SO. La Orden confirma cuál grupo vas a registrar.</p></div></div></div>
@@ -466,8 +480,7 @@ function Capture({ onCapture, records, user, profile, liveMode, operatorName, on
           {lookupError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">Detalle de consulta: {lookupError}</div> : null}
           {existingShRecords.length > 0 ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm font-bold text-amber-900">Este SH ya fue ingresado</p><p className="mt-1 text-xs leading-5 text-amber-800">Se encontraron {existingShRecords.length} registro(s) para <strong>{sh}</strong>. Puedes revisar el historial antes de registrar otro accesorio; si repites el mismo SH + accesorio, el sistema lo marcará como duplicado.</p></div> : null}
           {accessoryRows.length > 0 ? <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-cyan-950">Accesorios que debes capturar</p><p className="mt-1 text-xs text-cyan-800">Primero solicita cada accesorio en JAULA. Solo los accesorios con estado <strong>Liberado</strong> o <strong>Ya recogido</strong> permiten capturar cantidad y validar el registro.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-cyan-800">{accessoryRows.length} encontrados</span></div>{jaulaBusy ? <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500">Consultando autorización de JAULA…</div> : null}{accessoryRows.some((row) => !isAccessoryRegistered(row) && !isAccessoryReleased(row)) ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">Registro bloqueado: hay accesorios que todavía no han sido liberados por JAULA.</div> : null}<div className="mt-4 grid gap-3 md:grid-cols-2">{accessoryRows.map((row, index) => { const registered = isAccessoryRegistered(row); const jaulaStatus = getAccessoryJaulaStatus(row); const released = isAccessoryReleased(row); return <div key={`${row.reference.id}-${row.reference.order}`} className={`rounded-xl border p-3 ${registered || jaulaStatus === "recogido" ? "border-emerald-200 bg-emerald-50/75" : released ? "border-cyan-200 bg-cyan-50/75" : "border-amber-200 bg-amber-50/70"}`}><div className="mb-2 flex items-center justify-between gap-2"><span className={`text-[10px] font-bold uppercase tracking-[.1em] ${registered || released ? "text-emerald-700" : "text-amber-700"}`}>Accesorio {index + 1} · SO {row.reference.order}</span>{registered ? <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-emerald-700"><Check className="h-3 w-3" />Ya registrado</span> : released ? <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-cyan-800"><Check className="h-3 w-3" />JAULA: {jaulaStatus === "recogido" ? "Ya recogido" : "Liberado"}</span> : <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-amber-800">JAULA: Pendiente</span>}</div><div className="grid gap-2 sm:grid-cols-2"><input aria-label={`Código accesorio ${index + 1}`} value={row.code} onChange={(e) => updateAccessory(index, "code", e.target.value)} disabled={registered || !released} className={`field-input font-mono text-xs disabled:cursor-not-allowed disabled:border-amber-200 disabled:bg-amber-100 disabled:text-amber-800 ${registered || released ? "border-emerald-200 bg-white text-slate-800" : ""}`} placeholder={released ? "Código" : "Bloqueado por JAULA"} /><input aria-label={`Cantidad accesorio ${index + 1}`} type="number" min="0" step="0.001" value={row.quantity} onChange={(e) => updateAccessory(index, "quantity", e.target.value)} disabled={registered || !released} className={`field-input font-mono text-xs disabled:cursor-not-allowed disabled:border-amber-200 disabled:bg-amber-100 disabled:text-amber-800 ${registered || released ? "border-emerald-200 bg-white text-slate-800" : ""}`} placeholder={released ? "Cantidad" : "Solicita en JAULA"} /></div></div>; })}</div></div> : null}
-          <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label" htmlFor="ordersPerHour">Orden x hora</label><input id="ordersPerHour" type="number" min="0" step="0.001" value={ordersPerHour} onChange={(e) => setOrdersPerHour(e.target.value)} placeholder="Ej. 10" className="field-input font-mono" /></div><div><label className="field-label" htmlFor="piecesPerHour">Piezas x hora</label><input id="piecesPerHour" type="number" min="0" step="0.001" value={piecesPerHour} onChange={(e) => setPiecesPerHour(e.target.value)} placeholder="Ej. 33" className="field-input font-mono" /></div></div>
-          <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => { setOrder(""); setPart(""); setSh(""); setQuantity(""); setOrdersPerHour(""); setPiecesPerHour(""); setAccessoryRows([]); setJaulaStates({}); }} className="secondary-action justify-center">Limpiar</button><button type="submit" disabled={jaulaBusy || (accessoryRows.length > 0 && accessoryRows.some((row) => !isAccessoryRegistered(row) && !isAccessoryReleased(row)))} className="primary-action justify-center disabled:cursor-not-allowed disabled:opacity-50"><ScanLine className="h-4 w-4" />Validar y registrar</button></div>
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end"><button type="button" onClick={() => { setOrder(""); setPart(""); setSh(""); setQuantity(""); setAccessoryRows([]); setJaulaStates({}); }} className="secondary-action justify-center">Limpiar</button><button type="submit" disabled={jaulaBusy || (accessoryRows.length > 0 && accessoryRows.some((row) => !isAccessoryRegistered(row) && !isAccessoryReleased(row)))} className="primary-action justify-center disabled:cursor-not-allowed disabled:opacity-50"><ScanLine className="h-4 w-4" />Validar y registrar</button></div>
         </div>
       </form>
       <aside className="space-y-5"><div className="soft-card p-5 sm:p-6"><p className="eyebrow">Contexto de validación</p><div className="mt-5 space-y-4"><div className="flex gap-3"><div className="rounded-xl bg-emerald-50 p-2 text-emerald-600"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-800">Match de material</p><p className="mt-1 text-xs text-slate-500">SH + Fulbag/accesorio</p></div></div><div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Usuario</p><p className="mt-1 text-sm font-semibold text-slate-700">{operatorName}</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.1em] text-slate-400">Celda</p><p className="mt-1 text-sm font-semibold text-slate-700">{profile?.celda || "Sin asignar"}</p></div></div><p className="text-xs leading-5 text-slate-500">La orden se conserva para trazabilidad, pero no cambia el resultado del match.</p></div></div>{lastCapture ? <ResultCard record={lastCapture} /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center"><PackageCheck className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 text-sm font-bold text-slate-600">Esperando lectura</p><p className="mx-auto mt-1 max-w-[220px] text-xs leading-5 text-slate-400">El resultado del match aparecerá aquí después de registrar el material.</p></div>}</aside>
@@ -561,12 +574,38 @@ function Documents({ documents, references, records, user, profile, liveMode, on
 
 function Reports({ records }: { records: RecordItem[] }) {
   const [range, setRange] = useState("Turno actual");
-  const matches = records.filter((r) => r.match === "Coincide").length;
-  const rate = records.length ? Math.round((matches / records.length) * 100) : 0;
-  const hourlyData = buildHourlyData(records);
-  const totalQuantity = records.reduce((sum, record) => sum + record.quantity, 0);
-  const totalPieces = records.reduce((sum, record) => sum + record.piecesPerHour, 0);
-  const cellStats = Array.from(records.reduce((map, record) => {
+  const reportRecords = records.filter((record) => isRecordInRange(record, range));
+  const matches = reportRecords.filter((record) => record.match === "Coincide").length;
+  const rate = reportRecords.length ? Math.round((matches / reportRecords.length) * 100) : 0;
+  const hourlyData = buildHourlyData(reportRecords);
+  const totalQuantity = reportRecords.reduce((sum, record) => sum + record.quantity, 0);
+  const totalOrders = new Set(reportRecords.map((record) => `${record.cell || "Sin celda"}|||${record.order}`)).size;
+  const hourlyCellStats = Array.from(reportRecords.reduce((map, record) => {
+    const capturedAt = new Date(record.capturedAt);
+    const cell = record.cell || "Sin celda";
+    const hourNumber = capturedAt.getHours();
+    const key = `${capturedAt.toISOString().slice(0, 10)}|${cell}|${hourNumber}`;
+    const current = map.get(key) || {
+      sortKey: key,
+      date: capturedAt.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }),
+      hour: `${String(hourNumber).padStart(2, "0")}:00`,
+      cell,
+      orders: new Set<string>(),
+      pieces: 0,
+      captures: 0,
+      matches: 0,
+    };
+    current.orders.add(record.order);
+    current.pieces += record.quantity;
+    current.captures += 1;
+    if (record.match === "Coincide") current.matches += 1;
+    map.set(key, current);
+    return map;
+  }, new Map<string, { sortKey: string; date: string; hour: string; cell: string; orders: Set<string>; pieces: number; captures: number; matches: number }>()).values()).map((row) => ({
+    ...row,
+    orders: row.orders.size,
+  })).sort((a, b) => a.sortKey.localeCompare(b.sortKey) || a.cell.localeCompare(b.cell));
+  const cellStats = Array.from(reportRecords.reduce((map, record) => {
     const name = record.cell || "Sin celda";
     const current = map.get(name) || { name, quantity: 0, matches: 0, records: 0 };
     current.quantity += record.quantity;
@@ -575,24 +614,36 @@ function Reports({ records }: { records: RecordItem[] }) {
     map.set(name, current);
     return map;
   }, new Map<string, { name: string; quantity: number; matches: number; records: number }>()).values());
-  const operatorStats = Array.from(records.reduce((map, record) => {
+  const operatorStats = Array.from(reportRecords.reduce((map, record) => {
     const current = map.get(record.operator) || { name: record.operator, total: 0, quantity: 0, pieces: 0, matchCount: 0 };
     current.total += 1;
     current.quantity += record.quantity;
-    current.pieces += record.piecesPerHour;
+    current.pieces += record.quantity;
     if (record.match === "Coincide") current.matchCount += 1;
     map.set(record.operator, current);
     return map;
   }, new Map<string, { name: string; total: number; quantity: number; pieces: number; matchCount: number }>()).values()).map((person) => ({ ...person, match: person.total ? Math.round((person.matchCount / person.total) * 100) : 0 }));
-  function exportCsv() { const content = ["Hora,Celda,Orden,Numero de parte,SH,Cantidad,Orden x hora,Piezas x hora,Operador,Match,Revision", ...records.map((r) => [r.time, r.cell || "", r.order, r.part, r.sh, r.quantity, r.ordersPerHour, r.piecesPerHour, r.operator, r.match, r.review].join(","))].join("\n"); const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8;" })); link.download = "reporte-trazabilidad-hora-por-hora.csv"; link.click(); URL.revokeObjectURL(link.href); toast.success("Reporte CSV descargado."); }
-  return <div className="space-y-7"><SectionHeader eyebrow="Indicadores operativos" title="Reportes y productividad" description="Consulta el desempeño hora por hora, compara celdas y revisa lo ingresado por cada operador." action={<div className="flex gap-2"><select value={range} onChange={(e) => setRange(e.target.value)} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-cyan-500"><option>Turno actual</option><option>Hoy</option><option>Esta semana</option></select><button onClick={exportCsv} className="primary-action"><Download className="h-4 w-4" />Exportar CSV</button></div>} />
-    <div className="grid gap-4 sm:grid-cols-4"><MetricCard label="Tasa de match" value={`${rate}%`} hint="Combinaciones correctas" color="emerald" icon={CircleCheck} /><MetricCard label="Discrepancias" value={`${records.filter((r) => r.match === "Discrepancia" || r.match === "No encontrado").length}`} hint="Requieren atención" color="rose" icon={CircleAlert} /><MetricCard label="Cantidad ingresada" value={totalQuantity.toLocaleString("es-MX", { maximumFractionDigits: 3 })} hint="Suma de cantidades capturadas" color="cyan" icon={PackageCheck} /><MetricCard label="Piezas x hora" value={totalPieces.toLocaleString("es-MX", { maximumFractionDigits: 3 })} hint="Suma de productividad registrada" color="amber" icon={BarChart3} /></div>
-    <div className="soft-card p-5 sm:p-6"><div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-bold text-slate-800">Volumen y calidad de captura</p><p className="mt-1 text-xs text-slate-500">Comparativo de registros totales y coincidencias por bloque horario.</p></div><div className="mt-3 flex gap-4 text-[11px] font-semibold text-slate-500"><span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#0e7f8d]" />Capturas</span><span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#35c79e]" />Matches</span></div></div><div className="mt-6 h-[330px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={hourlyData} margin={{ top: 10, right: 12, bottom: 0, left: -18 }}><CartesianGrid vertical={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis dataKey="hour" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 11 }} dy={8} /><YAxis tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 11 }} /><Tooltip cursor={{ fill: "#f1f7f8" }} contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", boxShadow: "0 12px 24px rgba(15, 43, 56, .12)", fontSize: 12 }} /><Bar dataKey="registros" name="Capturas" fill="#0e7f8d" radius={[6, 6, 0, 0]} /><Bar dataKey="coincide" name="Matches" fill="#35c79e" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
-    <div className="grid gap-5 xl:grid-cols-2"><div className="soft-card p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-sm font-bold text-slate-800">Producción por celda</p><p className="mt-1 text-xs text-slate-500">Cantidad ingresada y matches por celda de trabajo.</p></div><span className="rounded-full bg-cyan-50 px-2.5 py-1 text-[11px] font-bold text-cyan-800">{cellStats.length} celdas con actividad</span></div><div className="mt-5 h-[285px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={cellStats} margin={{ top: 10, right: 8, bottom: 0, left: -12 }}><CartesianGrid vertical={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><YAxis tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", fontSize: 12 }} /><Bar dataKey="quantity" name="Cantidad ingresada" fill="#0e7f8d" radius={[5, 5, 0, 0]} /><Bar dataKey="matches" name="Matches" fill="#35c79e" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer></div></div><div className="soft-card p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-sm font-bold text-slate-800">Ingresado por operador</p><p className="mt-1 text-xs text-slate-500">Cantidad y piezas x hora reportadas por usuario.</p></div><UsersRound className="h-5 w-5 text-cyan-700" /></div><div className="mt-5 h-[285px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={operatorStats} layout="vertical" margin={{ top: 8, right: 12, bottom: 0, left: 10 }}><CartesianGrid horizontal={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><YAxis type="category" dataKey="name" width={90} tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", fontSize: 12 }} /><Bar dataKey="quantity" name="Cantidad" fill="#0e7f8d" radius={[0, 5, 5, 0]} /><Bar dataKey="matchCount" name="Matches" fill="#35c79e" radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div></div>
-    <div className="soft-card p-5 sm:p-6"><p className="text-sm font-bold text-slate-800">Detalle por operador</p><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[620px] text-left"><thead className="border-b border-slate-100 text-[10px] font-bold uppercase tracking-[.12em] text-slate-500"><tr><th className="px-3 py-3">Operador</th><th className="px-3 py-3">Capturas</th><th className="px-3 py-3">Cantidad</th><th className="px-3 py-3">Piezas x hora</th><th className="px-3 py-3">Matches</th><th className="px-3 py-3">Tasa</th></tr></thead><tbody className="divide-y divide-slate-100">{operatorStats.map((person) => <tr key={person.name}><td className="px-3 py-3 text-sm font-bold text-slate-800">{person.name}</td><td className="px-3 py-3 text-sm text-slate-600">{person.total}</td><td className="px-3 py-3 text-sm text-slate-600">{person.quantity.toLocaleString("es-MX", { maximumFractionDigits: 3 })}</td><td className="px-3 py-3 text-sm text-slate-600">{person.pieces.toLocaleString("es-MX", { maximumFractionDigits: 3 })}</td><td className="px-3 py-3 text-sm font-semibold text-emerald-700">{person.matchCount}</td><td className="px-3 py-3 text-sm font-semibold text-cyan-700">{person.match}%</td></tr>)}{operatorStats.length === 0 ? <tr><td colSpan={6} className="px-3 py-8 text-center text-xs text-slate-500">Aún no hay registros para mostrar.</td></tr> : null}</tbody></table></div></div>
+  function exportCsv() {
+    const escapeCsv = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
+    const content = [
+      ["Fecha", "Hora", "Celda", "Órdenes capturadas", "Piezas capturadas", "Capturas", "Matches"].map(escapeCsv).join(","),
+      ...hourlyCellStats.map((row) => [row.date, row.hour, row.cell, row.orders, row.pieces, row.captures, row.matches].map(escapeCsv).join(",")),
+    ].join("\n");
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8;" }));
+    link.download = "reporte-automatico-por-celda-y-hora.csv";
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast.success("Reporte automático CSV descargado.");
+  }
+  return <div className="space-y-7"><SectionHeader eyebrow="Indicadores operativos" title="Reportes y productividad" description="Los indicadores se calculan automáticamente con lo capturado por celda y hora; no necesitas ingresar órdenes o piezas manualmente." action={<div className="flex gap-2"><select value={range} onChange={(e) => setRange(e.target.value)} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-cyan-500"><option>Turno actual</option><option>Hoy</option><option>Esta semana</option></select><button onClick={exportCsv} className="primary-action"><Download className="h-4 w-4" />Exportar CSV</button></div>} />
+    <div className="grid gap-4 sm:grid-cols-4"><MetricCard label="Tasa de match" value={`${rate}%`} hint={`${matches} de ${reportRecords.length} capturas`} color="emerald" icon={CircleCheck} /><MetricCard label="Discrepancias" value={`${reportRecords.filter((r) => r.match === "Discrepancia" || r.match === "No encontrado").length}`} hint="Requieren atención" color="rose" icon={CircleAlert} /><MetricCard label="Órdenes capturadas" value={`${totalOrders}`} hint="Órdenes distintas por celda" color="cyan" icon={PackageCheck} /><MetricCard label="Piezas capturadas" value={totalQuantity.toLocaleString("es-MX", { maximumFractionDigits: 3 })} hint="Suma automática de cantidades" color="amber" icon={BarChart3} /></div>
+    <div className="soft-card overflow-hidden"><div className="border-b border-slate-100 px-5 py-5 sm:px-6"><p className="text-sm font-bold text-slate-800">Resumen automático por celda y hora</p><p className="mt-1 text-xs text-slate-500">Cada fila se genera agrupando las capturas de la base de datos por hora y celda. Las órdenes se cuentan sin duplicar la misma orden dentro del bloque.</p></div><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left"><thead className="bg-slate-50/80 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-5 py-3">Fecha</th><th className="px-5 py-3">Hora</th><th className="px-5 py-3">Celda</th><th className="px-5 py-3">Órdenes</th><th className="px-5 py-3">Piezas</th><th className="px-5 py-3">Capturas</th><th className="px-5 py-3">Matches</th></tr></thead><tbody className="divide-y divide-slate-100">{hourlyCellStats.map((row) => <tr key={`${row.sortKey}-${row.cell}`} className="transition hover:bg-slate-50/70"><td className="px-5 py-3 text-xs text-slate-600">{row.date}</td><td className="px-5 py-3 text-xs font-semibold text-slate-700">{row.hour}</td><td className="px-5 py-3"><span className="rounded-full bg-cyan-50 px-2.5 py-1 text-[11px] font-bold text-cyan-800">{row.cell}</span></td><td className="px-5 py-3 text-sm font-bold text-slate-800">{row.orders}</td><td className="px-5 py-3 text-sm text-slate-600">{row.pieces.toLocaleString("es-MX", { maximumFractionDigits: 3 })}</td><td className="px-5 py-3 text-sm text-slate-600">{row.captures}</td><td className="px-5 py-3 text-sm font-semibold text-emerald-700">{row.matches}</td></tr>)}{hourlyCellStats.length === 0 ? <tr><td colSpan={7} className="px-5 py-10 text-center text-xs text-slate-500">No hay capturas para el rango seleccionado.</td></tr> : null}</tbody></table></div></div>
+    <div className="soft-card p-5 sm:p-6"><div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-bold text-slate-800">Volumen y calidad de captura</p><p className="mt-1 text-xs text-slate-500">Comparativo automático de registros totales y coincidencias por bloque horario.</p></div><div className="mt-3 flex gap-4 text-[11px] font-semibold text-slate-500"><span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#0e7f8d]" />Capturas</span><span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#35c79e]" />Matches</span></div></div><div className="mt-6 h-[330px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={hourlyData} margin={{ top: 10, right: 12, bottom: 0, left: -18 }}><CartesianGrid vertical={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis dataKey="hour" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 11 }} dy={8} /><YAxis tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 11 }} /><Tooltip cursor={{ fill: "#f1f7f8" }} contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", boxShadow: "0 12px 24px rgba(15, 43, 56, .12)", fontSize: 12 }} /><Bar dataKey="registros" name="Capturas" fill="#0e7f8d" radius={[6, 6, 0, 0]} /><Bar dataKey="coincide" name="Matches" fill="#35c79e" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div></div>
+    <div className="grid gap-5 xl:grid-cols-2"><div className="soft-card p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-sm font-bold text-slate-800">Producción por celda</p><p className="mt-1 text-xs text-slate-500">Cantidad capturada y matches calculados por celda.</p></div><span className="rounded-full bg-cyan-50 px-2.5 py-1 text-[11px] font-bold text-cyan-800">{cellStats.length} celdas con actividad</span></div><div className="mt-5 h-[285px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={cellStats} margin={{ top: 10, right: 8, bottom: 0, left: -12 }}><CartesianGrid vertical={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><YAxis tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", fontSize: 12 }} /><Bar dataKey="quantity" name="Piezas capturadas" fill="#0e7f8d" radius={[5, 5, 0, 0]} /><Bar dataKey="matches" name="Matches" fill="#35c79e" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer></div></div><div className="soft-card p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-sm font-bold text-slate-800">Ingresado por operador</p><p className="mt-1 text-xs text-slate-500">Piezas calculadas directamente desde sus capturas.</p></div><UsersRound className="h-5 w-5 text-cyan-700" /></div><div className="mt-5 h-[285px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={operatorStats} layout="vertical" margin={{ top: 8, right: 12, bottom: 0, left: 10 }}><CartesianGrid horizontal={false} stroke="#e6edf1" strokeDasharray="3 3" /><XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><YAxis type="category" dataKey="name" width={90} tickLine={false} axisLine={false} tick={{ fill: "#718096", fontSize: 10 }} /><Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #dce9eb", fontSize: 12 }} /><Bar dataKey="quantity" name="Piezas" fill="#0e7f8d" radius={[0, 5, 5, 0]} /><Bar dataKey="matchCount" name="Matches" fill="#35c79e" radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div></div>
+    <div className="soft-card p-5 sm:p-6"><p className="text-sm font-bold text-slate-800">Detalle por operador</p><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[620px] text-left"><thead className="border-b border-slate-100 text-[10px] font-bold uppercase tracking-[.12em] text-slate-500"><tr><th className="px-3 py-3">Operador</th><th className="px-3 py-3">Capturas</th><th className="px-3 py-3">Piezas</th><th className="px-3 py-3">Matches</th><th className="px-3 py-3">Tasa</th></tr></thead><tbody className="divide-y divide-slate-100">{operatorStats.map((person) => <tr key={person.name}><td className="px-3 py-3 text-sm font-bold text-slate-800">{person.name}</td><td className="px-3 py-3 text-sm text-slate-600">{person.total}</td><td className="px-3 py-3 text-sm text-slate-600">{person.pieces.toLocaleString("es-MX", { maximumFractionDigits: 3 })}</td><td className="px-3 py-3 text-sm font-semibold text-emerald-700">{person.matchCount}</td><td className="px-3 py-3 text-sm font-semibold text-cyan-700">{person.match}%</td></tr>)}{operatorStats.length === 0 ? <tr><td colSpan={5} className="px-3 py-8 text-center text-xs text-slate-500">Aún no hay registros para mostrar.</td></tr> : null}</tbody></table></div></div>
   </div>;
 }
-
 function HistoryView({ records }: { records: RecordItem[] }) {
   return <div className="space-y-7"><SectionHeader eyebrow="Auditoría operativa" title="Historial de registros" description="Consulta la trazabilidad de cada captura, incluyendo el resultado automático y la decisión de supervisión." action={<button onClick={() => toast.info("Filtros avanzados disponibles al conectar la base de datos.")} className="secondary-action"><Filter className="h-4 w-4" />Filtros avanzados</button>} />
     <div className="soft-card overflow-hidden"><div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><p className="text-sm font-bold text-slate-800">Registros cargados</p><p className="mt-1 text-xs text-slate-500">{records.length} movimientos sincronizados desde Supabase.</p></div><div className="relative w-full sm:w-72"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input placeholder="Buscar en historial" className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs outline-none transition focus:border-cyan-500 focus:ring-3 focus:ring-cyan-100" /></div></div><div className="overflow-x-auto"><table className="w-full min-w-[860px] text-left"><thead className="bg-slate-50/80 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-6 py-3">Fecha / hora</th><th className="px-5 py-3">Orden / material</th><th className="px-5 py-3">SH</th><th className="px-5 py-3">Usuario</th><th className="px-5 py-3">Match</th><th className="px-6 py-3">Revisado</th></tr></thead><tbody className="divide-y divide-slate-100">{records.map((record) => <tr key={record.id} className="transition hover:bg-slate-50/70"><td className="px-6 py-4"><p className="text-xs font-semibold text-slate-700">{record.date}</p><p className="mt-0.5 text-xs text-slate-500">{record.time}</p></td><td className="px-5 py-4"><p className="text-sm font-bold text-slate-800">{record.order}</p><p className="mt-0.5 font-mono text-[11px] text-slate-500">{record.part}</p></td><td className="px-5 py-4 font-mono text-xs text-slate-600">{record.sh}</td><td className="px-5 py-4 text-sm text-slate-600">{record.operator}</td><td className="px-5 py-4"><StatusPill state={record.match} /></td><td className="px-6 py-4"><StatusPill state={record.review} /></td></tr>)}</tbody></table></div></div></div>;
@@ -625,23 +676,28 @@ export default function Home({ user, profile, liveMode, signOut }: AuthContextVa
       return;
     }
     let active = true;
-    setDataLoading(true);
-    void fetchTraceData(user, profile)
-      .then((data) => {
-        if (!active) return;
-        setRecords(data.records);
-        setDocuments(data.documents);
-        setReferences(data.references);
-        setDataWarnings(data.warnings || []);
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : "No fue posible cargar los datos de Supabase.";
-        setDataWarnings([message]);
-        toast.error(`No fue posible cargar los datos de Supabase: ${message}`);
-      })
-      .finally(() => { if (active) setDataLoading(false); });
-    return () => { active = false; };
-  }, [liveMode, profile, user]);
+    const syncData = (showLoading: boolean) => {
+      if (showLoading) setDataLoading(true);
+      void fetchTraceData(user, profile)
+        .then((data) => {
+          if (!active) return;
+          setRecords(data.records);
+          setDocuments(data.documents);
+          setReferences(data.references);
+          setDataWarnings(data.warnings || []);
+        })
+        .catch((error) => {
+          if (!active) return;
+          const message = error instanceof Error ? error.message : "No fue posible cargar los datos de Supabase.";
+          setDataWarnings([message]);
+          if (showLoading) toast.error(`No fue posible cargar los datos de Supabase: ${message}`);
+        })
+        .finally(() => { if (active && showLoading) setDataLoading(false); });
+    };
+    syncData(true);
+    const refreshTimer = view === "reportes" ? window.setInterval(() => syncData(false), 60_000) : undefined;
+    return () => { active = false; if (refreshTimer) window.clearInterval(refreshTimer); };
+  }, [liveMode, profile, user, view]);
   const pendingCount = useMemo(() => records.filter((record) => record.review === "Pendiente").length, [records]);
 
   function addRecord(record: RecordItem) { setRecords((current) => [record, ...current]); }

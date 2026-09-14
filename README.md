@@ -12,7 +12,7 @@ Desde el botón del perfil, el usuario puede editar sus datos propios. Un admini
 
 La carga del archivo requiere que el usuario tenga rol `supervisor` o `administrador`. El archivo original se intenta guardar en el bucket privado `documentos-maestros`; si el bucket todavía no existe, la importación de filas puede continuar, pero se mostrará una advertencia sobre Storage.
 
-La captura operativa utiliza el formato **Registro hora por hora**. Cada registro guarda SH, cantidad, orden x hora, piezas x hora, hora del servidor y la celda asignada al usuario. Las celdas válidas son `CELDA 16`, `CELDA 15`, `CELDA 11` y `CELDA 10`.
+La captura operativa utiliza el formato **Registro hora por hora**. Cada registro guarda SH, cantidad, hora del servidor y la celda asignada al usuario. La pestaña **Reportes** agrupa automáticamente las capturas por fecha, hora y celda para calcular órdenes distintas y piezas capturadas; mientras está abierta, sincroniza nuevos registros periódicamente. Las celdas válidas son `CELDA 16`, `CELDA 15`, `CELDA 11` y `CELDA 10`.
 
 ## Requisitos en Supabase
 
