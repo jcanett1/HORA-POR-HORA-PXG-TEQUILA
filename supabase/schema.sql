@@ -890,9 +890,7 @@ using (
 
 insert into public.turnos (nombre, codigo, hora_inicio, hora_fin)
 values
-  ('Primer turno', 'T1', '06:00', '14:00'),
-  ('Segundo turno', 'T2', '14:00', '22:00'),
-  ('Tercer turno', 'T3', '22:00', '06:00')
+  ('PXG TEQUILA', 'PXG', '06:00', '14:00')
 on conflict (nombre) do nothing;
 
 commit;
