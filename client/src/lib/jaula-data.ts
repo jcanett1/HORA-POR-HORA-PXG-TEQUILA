@@ -1,4 +1,4 @@
-import type { ProductionCell } from "./database.types";
+import type { JaulaCollector } from "./database.types";
 import { getJaulaGroupState, jaulaGroupKey, jaulaPartKey, saveJaulaStates, type JaulaAccessoryStatus, type JaulaGroupState, type JaulaStateMap } from "./jaulaStorage";
 import { supabase } from "./supabase";
 
@@ -10,7 +10,7 @@ export type JaulaRemoteRow = {
   sh_original: string;
   numero_parte_original: string;
   estado: JaulaAccessoryStatus;
-  celda_recoleccion: ProductionCell | null;
+  celda_recoleccion: JaulaCollector | null;
   pedido_at: string | null;
   updated_at: string;
 };
@@ -64,7 +64,7 @@ export async function markJaulaOrder(
   area: string,
   order: string,
   sh: string,
-  cell: ProductionCell,
+  cell: JaulaCollector,
   parts: string[],
 ): Promise<JaulaStateMap> {
   if (!supabase) throw new Error("Supabase no está configurado.");

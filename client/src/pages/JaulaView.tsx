@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Archive, Check, Eye, PackageCheck, X } from "lucide-react";
 import { toast } from "sonner";
-import type { ProductionCell } from "@/lib/database.types";
+import type { JaulaCollector } from "@/lib/database.types";
 import type { ReferenceRow } from "@/lib/trace-data";
 import { listJaulaStates, markJaulaOrder, mergeJaulaStates, persistJaulaCache, updateJaulaPart } from "@/lib/jaula-data";
 import {
@@ -23,7 +23,7 @@ type JaulaGroup = {
 
 type JaulaFilter = "todos" | "pendientes" | "pedidos" | "recogidos";
 
-const CELLS: ProductionCell[] = ["CELDA 16", "CELDA 15", "CELDA 11", "CELDA 10"];
+const CELLS: JaulaCollector[] = ["CELDA 16", "CELDA 15", "CELDA 11", "CELDA 10", "JAULA ( DIRECTO A SHIPPING)"];
 
 function groupReferences(references: ReferenceRow[]) {
   const groups = new Map<string, JaulaGroup>();
@@ -68,7 +68,7 @@ function partStatusClass(status: JaulaAccessoryStatus) {
   return "border-amber-100 bg-amber-50/60 text-amber-800";
 }
 
-function localOrderState(group: JaulaGroup, cell: ProductionCell): JaulaStateMap {
+function localOrderState(group: JaulaGroup, cell: JaulaCollector): JaulaStateMap {
   const now = Date.now();
   const parts = Object.fromEntries(group.parts.map((part) => [jaulaPartKey(group.order, group.sh, part.numero_parte_original), { status: "pendiente" as const, updatedAt: now, celda: cell }]));
   return { [jaulaGroupKey(group.order, group.sh)]: { pedidoAt: now, celda: cell, parts, updatedAt: now } };
@@ -85,17 +85,17 @@ function JaulaDetail({
   group: JaulaGroup;
   states: JaulaStateMap;
   loading: boolean;
-  onMarkOrdered: (group: JaulaGroup, cell: ProductionCell) => Promise<void>;
+  onMarkOrdered: (group: JaulaGroup, cell: JaulaCollector) => Promise<void>;
   onAdvancePart: (group: JaulaGroup, part: ReferenceRow, nextStatus: Extract<JaulaAccessoryStatus, "liberado" | "recogido">) => Promise<void>;
   onClose: () => void;
 }) {
   const state = getJaulaGroupState(states, group.order, group.sh);
   const currentStatus = groupStatus(group, states);
-  const [selectedCell, setSelectedCell] = useState<ProductionCell | null>((state.celda as ProductionCell | null) || null);
+  const [selectedCell, setSelectedCell] = useState<JaulaCollector | null>((state.celda as JaulaCollector | null) || null);
   const pickedCount = group.parts.filter((part) => getJaulaPartStatus(states, group.order, group.sh, part.numero_parte_original) === "recogido").length;
 
   useEffect(() => {
-    if (state.celda) setSelectedCell(state.celda as ProductionCell);
+    if (state.celda) setSelectedCell(state.celda as JaulaCollector);
   }, [state.celda]);
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm"><div className="modal-enter max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-start justify-between border-b border-slate-100 p-5 sm:p-6"><div><p className="eyebrow">Detalle de jaula</p><h2 className="mt-1 font-display text-xl font-semibold text-slate-900">{group.order} · {group.sh}</h2><p className="mt-1 text-xs text-slate-500">{pickedCount}/{group.parts.length} accesorios ya recogidos.</p></div><button onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button></div><div className="max-h-[68vh] space-y-4 overflow-y-auto p-5 sm:p-6"><div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-sm font-bold text-cyan-950">¿Quién recogerá los accesorios?</p><p className="mt-1 text-xs leading-5 text-cyan-800">Selecciona la celda responsable y después presiona <strong>Ya pedido</strong>. La celda quedará guardada en Supabase.</p></div>{state.pedidoAt && state.celda ? <span className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${statusClass(currentStatus)}`}>{statusLabel(currentStatus)} · {state.celda}</span> : null}</div>{!state.pedidoAt ? <><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{CELLS.map((cell) => <button key={cell} onClick={() => setSelectedCell(cell)} className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${selectedCell === cell ? "border-cyan-600 bg-cyan-700 text-white shadow-sm" : "border-cyan-200 bg-white text-cyan-800 hover:border-cyan-500"}`}>{cell}</button>)}</div><button disabled={!selectedCell || loading} onClick={() => selectedCell && void onMarkOrdered(group, selectedCell)} className="primary-action mt-4 w-full justify-center disabled:cursor-not-allowed disabled:opacity-50"><PackageCheck className="h-4 w-4" />{loading ? "Guardando…" : "Ya pedido"}</button></> : <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">Celda responsable: <strong>{state.celda || "No especificada"}</strong>. Ahora libera cada accesorio cuando esté listo para recogerlo.</div>}</div><div className="grid gap-3 sm:grid-cols-2">{group.parts.map((part) => { const partStatus = getJaulaPartStatus(states, group.order, group.sh, part.numero_parte_original); return <div key={part.id} className={`rounded-2xl border p-4 transition ${partStatusClass(partStatus)}`}><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.12em] opacity-70">Accesorio</p><p className="mt-1 font-mono text-sm font-bold">{part.numero_parte_original}</p></div><span className="rounded-full bg-white/80 px-2 py-1 text-[10px] font-bold">{partStatusLabel(partStatus)}</span></div><p className="mt-3 text-xs opacity-80">Fila {part.numero_fila_origen || "—"} · {part.orden_original} · {part.sh_original}</p>{partStatus === "pendiente" ? <button disabled={!state.pedidoAt || loading} onClick={() => void onAdvancePart(group, part, "liberado")} className="secondary-action mt-4 w-full justify-center disabled:cursor-not-allowed disabled:opacity-50">Liberar accesorio</button> : partStatus === "liberado" ? <button disabled={loading} onClick={() => void onAdvancePart(group, part, "recogido")} className="primary-action mt-4 w-full justify-center disabled:cursor-not-allowed disabled:opacity-50"><Check className="h-4 w-4" />Ya recogido</button> : <div className="mt-4 flex items-center justify-center gap-1.5 rounded-lg bg-white/80 px-3 py-2 text-xs font-bold text-emerald-700"><Check className="h-4 w-4" />Accesorio recogido</div>}</div>; })}</div></div><div className="flex justify-end border-t border-slate-100 p-5 sm:p-6"><button onClick={onClose} className="secondary-action">Cerrar</button></div></div></div>;
@@ -148,7 +148,7 @@ export default function JaulaView({ references, liveMode, planta, area }: { refe
     });
   }
 
-  async function handleMarkOrdered(group: JaulaGroup, cell: ProductionCell) {
+  async function handleMarkOrdered(group: JaulaGroup, cell: JaulaCollector) {
     setLoading(true);
     try {
       if (liveMode) applyIncoming(await markJaulaOrder(planta, area, group.order, group.sh, cell, group.parts.map((part) => part.numero_parte_original)));

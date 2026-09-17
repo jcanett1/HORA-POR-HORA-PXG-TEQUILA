@@ -62,6 +62,16 @@ Un operador sin celda puede elegirla una sola vez en la pestaña **Registro hora
 
 La hora no se acepta como dato editable del navegador: `fecha_hora_captura` continúa usando `now()` del servidor de Supabase.
 
+## Opción JAULA directo a Shipping
+
+Para habilitar la opción **JAULA ( DIRECTO A SHIPPING)** en la pestaña **JAULA**, ejecuta una sola vez en el SQL Editor de Supabase:
+
+```text
+supabase/jaula-shipping-option-migration.sql
+```
+
+La migración agrega el valor al catálogo `celda_produccion` sin modificar registros existentes. Si la migración base de JAULA aún no se ha ejecutado, ejecuta primero `supabase/jaula-migration.sql`.
+
 ## Turno operativo
 
 PXG TEQUILA utiliza un único turno operativo llamado `PXG TEQUILA`, con horario de referencia de `06:00` a `14:00` en `America/Monterrey`. En una base existente, ejecuta una vez `supabase/single-shift-migration.sql`; la migración conserva el historial y desactiva los turnos adicionales sin borrar registros.

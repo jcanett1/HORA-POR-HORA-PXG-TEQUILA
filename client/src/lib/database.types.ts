@@ -1,5 +1,6 @@
 export type UserRole = "operador" | "supervisor" | "administrador";
 export type ProductionCell = "CELDA 16" | "CELDA 15" | "CELDA 11" | "CELDA 10";
+export type JaulaCollector = ProductionCell | "JAULA ( DIRECTO A SHIPPING)";
 export type MatchResult = "coincide" | "discrepancia" | "no_encontrado" | "duplicado";
 export type SupervisorStatus = "pendiente" | "confirmado" | "rechazado" | "cancelado";
 export type DocumentStatus = "cargado" | "procesando" | "validado" | "activo" | "archivado" | "error";
