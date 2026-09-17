@@ -2,8 +2,8 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf
 import * as pdfjsLib from "pdfjs-dist";
 import { PART_DESCRIPTIONS } from "./partCatalog";
 
-export const CATEGORIES = ["Pelotas", "Gorras", "Guantes", "Accesorios", "Otros"] as const;
-export type ProductCategory = (typeof CATEGORIES)[number];
+export const CATEGORIES = ["Pelotas", "Gorras", "Guantes", "Accesorios", "Bolsas"] as const;
+export type ProductCategory = (typeof CATEGORIES)[number] | "Otros";
 export type PdfSource = "build" | "shipment";
 
 export type RelationRow = {
@@ -93,6 +93,7 @@ function escapeRegExp(value: string) {
 function classifyItem(code: string, description: string): ProductCategory {
   const upperCode = code.toUpperCase();
   const upperDescription = description.toUpperCase();
+  if (upperCode.startsWith("B-")) return "Bolsas";
   if (upperCode.startsWith("GB-DOZ-") || upperDescription.includes("GOLF BALL")) return "Pelotas";
   if (upperCode.startsWith("H-") || upperDescription.includes("HAT") || upperDescription.includes("CAP")) return "Gorras";
   if (upperCode.startsWith("G4-")) return "Guantes";
@@ -228,7 +229,7 @@ export async function parsePdfFile(file: File, source: PdfSource): Promise<Parse
 }
 
 function emptyCategoryRecord<T>(): Record<ProductCategory, T[]> {
-  return { Pelotas: [], Gorras: [], Guantes: [], Accesorios: [], Otros: [] };
+  return { Pelotas: [], Gorras: [], Guantes: [], Accesorios: [], Bolsas: [], Otros: [] };
 }
 
 export function buildAnalysis(build: ParsedPdf, shipment: ParsedPdf): PdfAnalysis {
@@ -428,7 +429,7 @@ export async function generateMergedPdf(analysis: PdfAnalysis, includePickup = t
   for (const category of CATEGORIES) {
     drawTableReport(merged, `RESUMEN DE APARICIONES: ${category.toUpperCase()}`, `${analysis.appearancesByCategory[category].length} códigos reconocidos`, ["Código", "Descripción", "Apariciones", "SH"], analysis.appearancesByCategory[category].map((row) => [row.code, row.description, String(row.appearances), row.shipment || "—"]), font, boldFont, [120, 225, 70, 113]);
   }
-  for (const category of ["Pelotas", "Gorras", "Guantes", "Accesorios"] as const) {
+  for (const category of ["Pelotas", "Gorras", "Guantes", "Accesorios", "Bolsas"] as const) {
     drawTableReport(merged, `LISTADO DE ${category.toUpperCase()}`, "Relaciones únicas encontradas por categoría", ["Orden", "Código", "Cantidad", "Descripción", "SH"], analysis.relationsByCategory[category].map((row) => [row.order, row.code, String(row.quantity), row.description, row.shipment]), font, boldFont, [78, 112, 58, 205, 75]);
   }
 
